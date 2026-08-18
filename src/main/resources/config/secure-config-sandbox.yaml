@@ -1,0 +1,9 @@
+# Salesforce connection (OAuth 2.0 Client Credentials)
+salesforce:
+  consumerKey: "![3Ikfh6CmQ9kp+gMo3oVnkf4tFHWsFiJAtGfXasBxFQHlgaqKshn919GhdQlENNfJjfGLuD6vQkN8GDirFRKzwtZNf7CpIE4B6JtUH8VsB8dfVI8J6F2EazySz+fokFwM]"
+  consumerSecret: "![1ePqlzneX3q8EQUqhNS1tYeGuEDuaoB1jadJX7+sb1nvUSxmPStJrWuchmIJ4+burMIwRCze43cq42337gMYvRyQmSiPt2Wm7bbNhVzHrJ0=]"
+  
+#CIE 
+cie:
+  username: "![2L1DTmAXGaD0cL9jlGjI4RDSkwX22lSMEECVbBBAcw7BBkGDIxWwLSK0u7VSgAyZ8MCh+AdcowX5r3kYLJPAsw==]"
+  password: "![F2JsE13m1M/Pvg3fC5+hF4E5xEBjsiJ7y79ewcDKhRI=]" 

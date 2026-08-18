@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd 
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+	<global-property doc:name="Global Property" doc:id="74ca8376-9be3-49ef-b331-27c94d21d6ae" name="mule.encryptionKey" value="CIE@Plative12345" />
+	<global-property doc:name="Global Property" doc:id="7c20593f-4cf3-4d6f-9703-5c811ffc9678" name="mule.env" value="sandbox" />
+	
+	<configuration-properties file="config/common.yaml" doc:name="common properties"/>
+	<configuration-properties file="config/config-${mule.env}.yaml" doc:name="env properties"/>
+	<secure-properties:config name="Secure_Properties_Config" file="config/secure-config-${mule.env}.yaml" key="${mule.encryptionKey}" doc:name="secure properties"/>
+
+	<http:request-config
+		name="common-request-config" doc:name="Common Request Config"
+		responseTimeout="30000">
+		<http:request-connection protocol="HTTPS"
+			host="#[vars.httpOperation.host]" port="#[vars.httpOperation.port]">
+			<reconnection>
+				<reconnect count="${http.reconnect.count}" frequency="${http.reconnect.frequencyMs}"/>
+			</reconnection>
+			<http:authentication >
+				<http:basic-authentication username="${secure::cie.username}" password="${secure::cie.password}" />
+			</http:authentication>
+		</http:request-connection>
+	</http:request-config>
+
+	<salesforce:sfdc-config name="Salesforce_Core_Config" doc:name="salesforce core config">
+		<salesforce:oauth-client-credentials-connection>
+			<salesforce:oauth-client-credentials
+				clientId="${secure::salesforce.consumerKey}"
+				clientSecret="${secure::salesforce.consumerSecret}"
+				tokenUrl="${salesforce.tokenUrl}"/>
+		</salesforce:oauth-client-credentials-connection>
+	</salesforce:sfdc-config>
+</mule>

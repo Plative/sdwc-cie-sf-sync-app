@@ -1,0 +1,17 @@
+#Schedule to run daily at 8:00 AM
+scheduler:
+  cron:
+    expression: "0 0 8 * * ?"
+    timezone: "America/New_York"
+
+#Salesforce
+salesforce:
+  tokenUrl: "https://sandiegohealthcarequalitycollabora--partial.sandbox.my.salesforce.com/services/oauth2/token"
+  
+#CIE
+cie:
+  host: "use6-cai.dm-us.informaticacloud.com"
+  port: "443"
+  referrals:
+    method: "GET"
+    path: "/active-bpel/rt/SDWC_GetReferralOutcomeList"

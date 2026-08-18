@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+	    <flow name="cie-referral-salesforce-sync" doc:name="CIE Salesforce Order Sync"
+        doc:description="Polls CIE for orders, converts the response to Java, and upserts records into Salesforce">
+
+        <scheduler doc:name="Poll schedule for CIE Referral"
+            doc:description="Triggers the flow on a fixed interval; no cadence was specified, so this defaults to every 5 minutes">
+            <scheduling-strategy>
+                <fixed-frequency frequency="300000" />
+            </scheduling-strategy>
+        </scheduler>
+	<logger level="INFO" doc:name="START" doc:id="a52d2aa6-9687-4496-ad5f-5f7bb14b19a9" message='#["START : CIE Referral sync to Salesforce"]'/>
+		<flow-ref doc:name="cie-referral-salesforce-sync-main-sub-flow" doc:id="07bafce3-e62b-479a-bb89-29c48e1f9e55" name="cie-referral-salesforce-sync-main-sub-flow"/>
+		<logger level="INFO" doc:name="END" doc:id="af1603af-7db4-4b03-aff1-80a5ad074995" message='#["END : CIE Referral sync to Salesforce"]'/>
+</flow>
+</mule>

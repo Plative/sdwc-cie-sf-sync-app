@@ -1,0 +1,11 @@
+app:
+  name: "cie-salesforce-sync-app"
+  version: "v1.0.0"
+  
+http:
+  retry:
+    maxRetries: "3"
+    backoffMs: "2000"
+  reconnect:
+    count: "3"
+    frequencyMs: "2000"

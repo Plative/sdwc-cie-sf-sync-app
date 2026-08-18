@@ -1,0 +1,9 @@
+#Salesforce
+salesforce :
+  clientId : "![]"
+  clientSecret : "![]"
+
+#CIE 
+cie:
+  username: "![]"
+  password: "![]" 

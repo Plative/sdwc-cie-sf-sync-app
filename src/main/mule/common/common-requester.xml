@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	<sub-flow name="common-requester-sub-flow" doc:id="e14b03d1-3f8e-4a35-bd4c-a04bd9c7d314" >
+		<logger level="INFO" doc:name="Before Request Call" doc:id="11271cd7-9e4c-4f31-9fc9-83e4aad61b80" message='#["Before Making request to call to CIE"]'/>
+		<http:request method="#[vars.httpOperation.method]" doc:name="Request CIE" doc:id="ca2bb3e3-eda2-4b3d-9640-fbfda1a80982" doc:description="Calls the CIE requester endpoint over Basic Authentication to retrieve the orders payload" path="#[vars.httpOperation.path]" sendCorrelationId="ALWAYS" correlationId="#[correlationId]" config-ref="common-request-config"/>
+		<logger level="INFO" doc:name="After Request Call" doc:id="d36a5e84-a25f-4b7a-8655-0bae36fe538b" message='#["After Making request to call to CIE"]' />
+	</sub-flow>
+</mule>

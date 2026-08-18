@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce" xmlns:snowflake="http://www.mulesoft.org/schema/mule/snowflake"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/snowflake http://www.mulesoft.org/schema/mule/snowflake/current/mule-snowflake.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd">
+	<sub-flow name="salesforce-query-operation-sub-flow" doc:id="ccd99d6a-8800-494a-ba07-ad5ef68b0853" >
+		<logger level="INFO" doc:name="Before Salesforce Query Operation" doc:id="129cdcab-6c3b-4ef4-bee2-ca077e2c231b" message='#["Before Salesforce Query Operation"]'/>
+		<salesforce:query doc:name="Query" doc:id="b0b9d28f-1206-4e3d-bd7b-5643f2ef5b9c" config-ref="Salesforce_Core_Config">
+			<salesforce:salesforce-query><![CDATA[#[vars.sfQuery]]]></salesforce:salesforce-query>
+		</salesforce:query>
+		<logger level="INFO" doc:name="After Salesforce Query Operation" doc:id="9753d2ab-3fe4-49ad-994b-8426f4377c6f" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Query Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]'/>
+	</sub-flow>
+	<sub-flow name="salesforce-upsert-operation-sub-flow" doc:id="d4ae3546-a27a-428c-9a11-136390a66fc4" >
+		<logger level="INFO" doc:name="Before Salesforce Upsert Operation" doc:id="edda21f2-04d4-46ea-9e41-ac3cd725ae45" message='#["Before Salesforce Upsert Operation"]' />
+		<salesforce:upsert doc:name="Upsert" doc:id="a2c81c93-fa4d-443a-ab9d-75b114fef119" config-ref="Salesforce_Core_Config" objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]"/>
+		<logger level="INFO" doc:name="After Salesforce Upsert Operation" doc:id="3e1adfb9-0de5-49bd-92c5-e1208b09a4b0" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Upsert Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]' />
+	</sub-flow>
+</mule>

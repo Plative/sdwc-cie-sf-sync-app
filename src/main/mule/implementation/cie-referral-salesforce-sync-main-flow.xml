@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<sub-flow name="cie-referral-salesforce-sync-main-sub-flow" doc:id="ba0253b8-b438-4669-ae41-cb24b273c781" >
+		<ee:transform doc:name="httpOperation" doc:id="f6923aa6-f5ca-4289-8b8a-cb63f0484112" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="httpOperation" ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	method : Mule::p('cie.referrals.method'),
+	host: Mule::p('cie.host'),
+	port: Mule::p('cie.port'),
+	path : Mule::p('cie.referrals.path')
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="Get CIE Referral" doc:id="2db83f10-f3ec-4ffd-951d-7ab130654cd7" name="common-requester-sub-flow"/>
+		<set-variable value="#[%dw 2.0&#10;output application/json&#10;---&#10;payload.referral_outcome_list map ((item, index) -&gt; item.created_by_id)]" doc:name="cieReferralId" doc:id="e7cc5e8d-4afa-4554-8dfb-a3de5378f470" variableName="cieReferralId"/>
+		<parallel-foreach doc:name="Parallel For Each on cieReferralId" doc:id="3d013f5c-0156-4b1c-9b14-afc592eca948" collection="#[vars.cieReferralId]" maxConcurrency="1">
+			<set-variable value="#[&quot;SELECT CIE_user_id__c, id&#10;&#10;FROM user where CIE_user_id__c = '&quot; ++ payload ++&quot;'&quot;]" doc:name="sfQuery" doc:id="968c134d-d12d-49e2-8008-d60ef8e30855" variableName="sfQuery" />
+			<flow-ref doc:name="Query User" doc:id="4b252cf9-3110-4b1a-92a5-02d833ba73f2" name="salesforce-query-operation-sub-flow" />
+			<choice doc:name="CIE User exists in Ssalesforce?" doc:id="63d5eafe-408f-4e4c-ab38-b9e9a62d578e" >
+				<when expression="#[!isEmpty(payload)]">
+					<ee:transform doc:name="Referral Mapping" doc:id="a4cd7ab1-aad0-41ea-ac48-e049b634ef9c">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+	
+}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<flow-ref doc:name="Upsert Referral" doc:id="b1ce1b39-cadf-4814-bde2-df75ee7e6646" name="salesforce-upsert-operation-sub-flow"/>
+				</when>
+				<otherwise >
+					<logger level="INFO" doc:name="No CIE User ID Match" doc:id="0ae0459a-0458-460c-a842-f6a13474c1ce" message='#[output application/json&#10;---&#10;{&#10;	Message : "No CIE User ID Match in Salesforce"&#10;}]'/>
+				</otherwise>
+			</choice>
+		</parallel-foreach>
+	</sub-flow>
+</mule>
