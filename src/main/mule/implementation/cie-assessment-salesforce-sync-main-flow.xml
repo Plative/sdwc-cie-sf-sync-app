@@ -45,13 +45,16 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		- CIE wraps records in "out_assessment_list", not "assessment_list".
 		- CIE field names are Assessment_Id, Created_By_Id, Medi_Cal_CIN,
 		  Last_Name, Birthdate / not the snake_case guesses used before.
-		- CIE also returns Account_Id and SDWC_Client_Id per record.
-		  Account_Id looks like a Salesforce Id (prefix 001) but does NOT
-		  resolve to any real Account in this org / it's CIE's own internal
-		  identifier, coincidentally shaped like one. SDWC_Client_Id is the
-		  field that should carry the value matching Account.CIE_Client_ID__c,
-		  though it came back null on both live test records, so Tier 1
-		  hasn't been exercised with real data yet.
+		- CORRECTED 2026-08-20: CIE also returns Account_Id and SDWC_Client_Id
+		  per record. Account_Id is populated on every live test record and
+		  looks like a Salesforce Id (prefix 001), but does NOT resolve to
+		  any real Account in this sandbox / confirmed by direct Id lookup.
+		  It's still the RIGHT field for Tier 1 matching: it's the value
+		  meant to be written to and matched against Account.CIE_Client_ID__c,
+		  not treated as a literal Salesforce Id. SDWC_Client_Id, which the
+		  original build used instead, has been null on every live test
+		  record seen so far and is not the field to use here. cieClientId
+		  now maps from item.Account_Id.
 		- The target Salesforce object is Assessment_PLI__c, NOT
 		  Housing_Assessment__c as originally assumed. It's part of a
 		  PLI-prefixed package (Program Lifecycle Item, standard on Health
@@ -96,7 +99,7 @@ output application/json
 		</ee:transform>
 		<flow-ref doc:name="Get CIE Assessments" doc:id="03b4c5d6-e7f8-4091-a2b3-c5d6e7f80910" name="common-requester-sub-flow" />
 
-		<set-variable value="#[%dw 2.0&#10;output application/java&#10;---&#10;payload.out_assessment_list default [] map (item) -&gt; {&#10;	sourceId: item.Assessment_Id,&#10;	cieClientId: item.SDWC_Client_Id,&#10;	medicaidCin: item.Medi_Cal_CIN,&#10;	lastName: item.Last_Name,&#10;	dob: item.Birthdate,&#10;	creatingCieUserId: item.Created_By_Id,&#10;	housingConcern: item.HO_Housing_Concern,&#10;	safetyInCurrentSituation: item.HO_Safety_in_Current_Situation,&#10;	immediateThreat: item.HO_Immediate_Threat,&#10;	immediacyOfNeed: item.HO_Immediacy_of_Need,&#10;	currentLivingSituation: item.HO_Current_Living_Situation,&#10;	livingSituationChanged30Days: item.HO_Living_Situation_Changed_30_Days,&#10;	timeLeftToStay: item.HO_Time_Left_to_Stay,&#10;	pastExperienceOfHomelessness: item.HO_Past_Experience_of_Homelessness,&#10;	monthsOfHomelessness: item.HO_Months_of_Homelessness,&#10;	lastTimeHadALease: item.HO_Last_Time_Had_a_Lease,&#10;	subsidyForRentOrOwn: item.HO_Subsidy_for_Rent_or_Own,&#10;	riskOfLosingHousing: item.HO_Risk_of_Losing_Housing,&#10;	housingPrioritization: item.HO_Housing_Prioritization,&#10;	financialBarriers: item.HO_Financial_Barriers,&#10;	pastOrOnGoingBarriers: item.HO_Past_or_OnGoing_Barriers,&#10;	suddenEventBarriers: item.HO_Sudden_Event_Barriers,&#10;	housingSupports: item.HO_Housing_Supports,&#10;	pastHousingResourceUtilization: item.HO_Past_Housing_Resource_Utilization,&#10;	currentHousingResourceUtilization: item.HO_Current_Housing_Resource_Utilization,&#10;	housingResourceKnowledge: item.HO_Housing_Resource_Knowledge,&#10;	housingBudgetKnowledge: item.HO_Housing_Budget_Knowledge,&#10;	desiredHousingResources: item.HO_Desired_Housing_Resources&#10;}]"
+		<set-variable value="#[%dw 2.0&#10;output application/java&#10;---&#10;payload.out_assessment_list default [] map (item) -&gt; {&#10;	sourceId: item.Assessment_Id,&#10;	cieClientId: item.Account_Id,&#10;	medicaidCin: item.Medi_Cal_CIN,&#10;	lastName: item.Last_Name,&#10;	dob: item.Birthdate,&#10;	creatingCieUserId: item.Created_By_Id,&#10;	housingConcern: item.HO_Housing_Concern,&#10;	safetyInCurrentSituation: item.HO_Safety_in_Current_Situation,&#10;	immediateThreat: item.HO_Immediate_Threat,&#10;	immediacyOfNeed: item.HO_Immediacy_of_Need,&#10;	currentLivingSituation: item.HO_Current_Living_Situation,&#10;	livingSituationChanged30Days: item.HO_Living_Situation_Changed_30_Days,&#10;	timeLeftToStay: item.HO_Time_Left_to_Stay,&#10;	pastExperienceOfHomelessness: item.HO_Past_Experience_of_Homelessness,&#10;	monthsOfHomelessness: item.HO_Months_of_Homelessness,&#10;	lastTimeHadALease: item.HO_Last_Time_Had_a_Lease,&#10;	subsidyForRentOrOwn: item.HO_Subsidy_for_Rent_or_Own,&#10;	riskOfLosingHousing: item.HO_Risk_of_Losing_Housing,&#10;	housingPrioritization: item.HO_Housing_Prioritization,&#10;	financialBarriers: item.HO_Financial_Barriers,&#10;	pastOrOnGoingBarriers: item.HO_Past_or_OnGoing_Barriers,&#10;	suddenEventBarriers: item.HO_Sudden_Event_Barriers,&#10;	housingSupports: item.HO_Housing_Supports,&#10;	pastHousingResourceUtilization: item.HO_Past_Housing_Resource_Utilization,&#10;	currentHousingResourceUtilization: item.HO_Current_Housing_Resource_Utilization,&#10;	housingResourceKnowledge: item.HO_Housing_Resource_Knowledge,&#10;	housingBudgetKnowledge: item.HO_Housing_Budget_Knowledge,&#10;	desiredHousingResources: item.HO_Desired_Housing_Resources&#10;}]"
 			doc:name="assessmentRecords" doc:id="14c5d6e7-f809-4192-b3c4-d6e7f8091a2b" variableName="assessmentRecords" />
 
 		<!--
