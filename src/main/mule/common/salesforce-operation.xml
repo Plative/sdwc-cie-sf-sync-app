@@ -17,4 +17,32 @@ http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mu
 		<salesforce:upsert doc:name="Upsert" doc:id="a2c81c93-fa4d-443a-ab9d-75b114fef119" config-ref="Salesforce_Core_Config" objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]"/>
 		<logger level="INFO" doc:name="After Salesforce Upsert Operation" doc:id="3e1adfb9-0de5-49bd-92c5-e1208b09a4b0" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Upsert Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]' />
 	</sub-flow>
+	<!--
+		Used by member-matching's Tier 2 write-back: once a member is
+		matched on CIN/Last Name/DOB, the CIE Client ID gets written onto
+		that Account so Tier 1 resolves it directly next run. Confirmed as
+		real (not speculative) on the 2026-08-19 CIE Referral API || SF
+		Field call with Toshiv Shrivastava: "the first match that you're
+		doing is just based on first name, last name and date of birth or
+		medical ID. If you find it, you update that client ID on the
+		account record."
+
+		Deliberately an update-by-Id, not an upsert-by-external-id: upserting
+		on CIE_Client_ID__c before that field has ever been set on this
+		Account would risk Salesforce creating a NEW Account instead of
+		updating the one Tier 2 just matched, since there'd be no existing
+		record with that external id value yet.
+
+		NOTE: this element/attribute shape was hand-authored to match the
+		style of salesforce:query and salesforce:upsert above, on the
+		mule-salesforce-connector version pinned in pom.xml. It has not been
+		confirmed against Studio's generated XML the way the query/upsert
+		operations were. Drag a Salesforce "Update" operation onto the
+		canvas in Studio and diff it against this before relying on it.
+	-->
+	<sub-flow name="salesforce-update-operation-sub-flow" doc:id="f1a92c7b-3e4d-4a8b-9c2e-6d5b8a1f7e30">
+		<logger level="INFO" doc:name="Before Salesforce Update Operation" doc:id="a3c8e2d1-9f4b-4e6a-8d7c-1b2e3f4a5c60" message='#["Before Salesforce Update Operation"]' />
+		<salesforce:update doc:name="Update" doc:id="b4d9f3e2-0a5c-4f7b-9e8d-2c3f4a5b6d71" config-ref="Salesforce_Core_Config" objectType="#[vars.sfObject]"/>
+		<logger level="INFO" doc:name="After Salesforce Update Operation" doc:id="c5e0a4f3-1b6d-408c-af9e-3d4a5b6c7e82" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Update Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]' />
+	</sub-flow>
 </mule>

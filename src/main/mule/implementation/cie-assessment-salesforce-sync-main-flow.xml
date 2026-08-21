@@ -7,41 +7,75 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 
 	<!--
 		Flow A: Housing Assessment ingestion. Rebuilt per the 2026-08-18
-		SDWC/Plative working sync (Jacob Belizario, Niranja Nair), which is
-		the authoritative walkthrough for this flow / more specific than the
-		general technical design on member matching and on what gets created
-		when a match fails. Mirrors cie-referral-salesforce-sync-main-flow.xml's
-		overall shape (httpOperation transform -> common-requester -> per-record
-		loop -> CIE User ID gate) plus two steps referrals don't have: member
+		SDWC/Plative working sync (Jacob Belizario, Niranja Nair), the
+		authoritative walkthrough for this flow. Mirrors
+		cie-referral-salesforce-sync-main-flow.xml's overall shape
+		(httpOperation transform -> common-requester -> per-record loop ->
+		CIE User ID gate) plus two steps referrals don't have: member
 		matching and Case association.
 
 		Five steps confirmed on the call, in order:
-		1. Check CIE User ID match (creatingCieUserId against Salesforce User's
-		   external id field). No match -> drop the record, nothing created.
+		1. Check CIE User ID match (Created_By_Id against User.CIE_user_id__c).
+		   No match -> drop the record, nothing created. VERIFIED end-to-end
+		   2026-08-19 against live CIE test data after Niranja populated
+		   CIE_user_id__c on two Salesforce Users.
 		2. (Handled by the upsert below) Check if the Assessment already
 		   exists by external id, so a status update never creates a duplicate.
 		3. Member matching / see member-matching-operation.xml. No match ->
 		   do NOT create a Person Account. Leave the Member lookup blank and
-		   still create the Assessment.
+		   still create the Assessment. Currently every live test record
+		   falls through to no-match, since no Account has CIE_Client_ID__c
+		   populated yet and Tier 2 needs 2 of {CIN, Last Name, DOB} which
+		   the test payload doesn't carry either / this is expected, not
+		   a bug, until real matchable test data exists.
 		4. Case association / see case-association-operation.xml. Only
 		   attempted when a Member was matched. No open Case -> leave the
 		   Case lookup blank, do NOT create a Case.
 		5. Create/update the Assessment record. Per the call, this is the
-		   ONLY record this flow creates ("I'm only to create one record...
-		   if other things are blank then leave it blank"). No separate
-		   Exception/Staging or Integration Log object / logging here
-		   follows the same logger-only convention already used in the
-		   referral flow.
+		   ONLY record this flow creates. No separate Exception/Staging or
+		   Integration Log object / logging here follows the same
+		   logger-only convention already used in the referral flow.
+		   VERIFIED end-to-end 2026-08-19: both live CIE test assessments
+		   upserted successfully into the real Assessment_PLI__c object with
+		   blank Member/Case lookups.
 
-		PLACEHOLDER: the CIE assessment payload shape below
-		(payload.assessment_list, item.client_id, item.created_by_id, etc.)
-		is inferred from the technical design and data-mapping workbook, not
-		confirmed against a real response / the Assessment API endpoint/dev
-		credentials are still a pending item. Update field names once CIE
-		delivers test data. The Salesforce field names below
-		(Housing_Assessment__c, CIE_Assessment_ID__c, Member__c, Case__c,
-		Program_Enrollment__c) are likewise placeholders pending confirmation
-		against the real org.
+		CONFIRMED against the real CIE Assessment API response and the real
+		Salesforce org via describe (2026-08-19), replacing every placeholder
+		field name from the original build:
+		- CIE wraps records in "out_assessment_list", not "assessment_list".
+		- CIE field names are Assessment_Id, Created_By_Id, Medi_Cal_CIN,
+		  Last_Name, Birthdate / not the snake_case guesses used before.
+		- CIE also returns Account_Id and SDWC_Client_Id per record.
+		  Account_Id looks like a Salesforce Id (prefix 001) but does NOT
+		  resolve to any real Account in this org / it's CIE's own internal
+		  identifier, coincidentally shaped like one. SDWC_Client_Id is the
+		  field that should carry the value matching Account.CIE_Client_ID__c,
+		  though it came back null on both live test records, so Tier 1
+		  hasn't been exercised with real data yet.
+		- The target Salesforce object is Assessment_PLI__c, NOT
+		  Housing_Assessment__c as originally assumed. It's part of a
+		  PLI-prefixed package (Program Lifecycle Item, standard on Health
+		  Cloud-style Program Management orgs) with ~150 fields.
+		- Member lookup is Member_PLI__c, NOT Member__c.
+		- Case lookup is Case_PLI__c, NOT Case__c (matches the field name
+		  used in case-association-operation.xml's ProgramEnrollment query).
+		- Name is a system-managed autonumber (e.g. "AS-0061") and is
+		  NOT writable by the integration user / attempting to set it
+		  returns INVALID_FIELD_FOR_INSERT_UPDATE. Renewal_Date_Today_PLI__c
+		  is also currently blocked by field-level security for the
+		  Client Credentials Run As user; left out of the mapping below
+		  until that's resolved, since it isn't part of the CIE payload
+		  anyway.
+		- HO_* field mappings below are best-effort matches by
+		  meaning/label against the real Assessment_PLI__c field list, not
+		  individually confirmed field-by-field. Several CIE "Other_*"
+		  free-text companions (e.g. HO_Other_Financial_Barriers) have no
+		  corresponding field on Assessment_PLI__c and are intentionally
+		  dropped / flag to Niranja if that detail needs to be captured
+		  somewhere. Picklist/multipicklist fields carry a real risk that
+		  CIE's value text won't exactly match this org's picklist API
+		  values; only Current_Housing_Situation_PLI__c (a free-text field)
+		  has been upsert-tested against a live value so far.
 	-->
 	<sub-flow name="cie-assessment-salesforce-sync-main-sub-flow" doc:id="e1f2a3b4-c5d6-4708-8192-a3b4c5d6e7f8">
 
@@ -62,8 +96,36 @@ output application/json
 		</ee:transform>
 		<flow-ref doc:name="Get CIE Assessments" doc:id="03b4c5d6-e7f8-4091-a2b3-c5d6e7f80910" name="common-requester-sub-flow" />
 
-		<set-variable value="#[%dw 2.0&#10;output application/java&#10;---&#10;payload.assessment_list default [] map (item) -&gt; {&#10;	sourceId: item.assessment_id,&#10;	cieClientId: item.client_id,&#10;	medicaidCin: item.medicaid_cin,&#10;	lastName: item.last_name,&#10;	dob: item.dob,&#10;	creatingCieUserId: item.created_by_id&#10;}]"
+		<set-variable value="#[%dw 2.0&#10;output application/java&#10;---&#10;payload.out_assessment_list default [] map (item) -&gt; {&#10;	sourceId: item.Assessment_Id,&#10;	cieClientId: item.SDWC_Client_Id,&#10;	medicaidCin: item.Medi_Cal_CIN,&#10;	lastName: item.Last_Name,&#10;	dob: item.Birthdate,&#10;	creatingCieUserId: item.Created_By_Id,&#10;	housingConcern: item.HO_Housing_Concern,&#10;	safetyInCurrentSituation: item.HO_Safety_in_Current_Situation,&#10;	immediateThreat: item.HO_Immediate_Threat,&#10;	immediacyOfNeed: item.HO_Immediacy_of_Need,&#10;	currentLivingSituation: item.HO_Current_Living_Situation,&#10;	livingSituationChanged30Days: item.HO_Living_Situation_Changed_30_Days,&#10;	timeLeftToStay: item.HO_Time_Left_to_Stay,&#10;	pastExperienceOfHomelessness: item.HO_Past_Experience_of_Homelessness,&#10;	monthsOfHomelessness: item.HO_Months_of_Homelessness,&#10;	lastTimeHadALease: item.HO_Last_Time_Had_a_Lease,&#10;	subsidyForRentOrOwn: item.HO_Subsidy_for_Rent_or_Own,&#10;	riskOfLosingHousing: item.HO_Risk_of_Losing_Housing,&#10;	housingPrioritization: item.HO_Housing_Prioritization,&#10;	financialBarriers: item.HO_Financial_Barriers,&#10;	pastOrOnGoingBarriers: item.HO_Past_or_OnGoing_Barriers,&#10;	suddenEventBarriers: item.HO_Sudden_Event_Barriers,&#10;	housingSupports: item.HO_Housing_Supports,&#10;	pastHousingResourceUtilization: item.HO_Past_Housing_Resource_Utilization,&#10;	currentHousingResourceUtilization: item.HO_Current_Housing_Resource_Utilization,&#10;	housingResourceKnowledge: item.HO_Housing_Resource_Knowledge,&#10;	housingBudgetKnowledge: item.HO_Housing_Budget_Knowledge,&#10;	desiredHousingResources: item.HO_Desired_Housing_Resources&#10;}]"
 			doc:name="assessmentRecords" doc:id="14c5d6e7-f809-4192-b3c4-d6e7f8091a2b" variableName="assessmentRecords" />
+
+		<!--
+			ROOT CAUSE found during full-flow testing on 2026-08-19, AFTER the
+			picklist value mismatches reported to Toshiv were already fixed:
+			every upsert was still failing with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST
+			on values that describe() confirmed were valid, active picklist
+			entries. Cause: Assessment_PLI__c has 3 Record Types (ECM
+			Assessment, Housing Assessment, Master), and picklist value sets
+			are restricted PER RECORD TYPE, not just at the field level. Every
+			upsert so far omitted RecordTypeId, so Salesforce defaulted to
+			"ECM Assessment" / the wrong record type for a housing
+			integration, and one where most of our mapped values aren't even
+			enabled. Confirmed via the UI API's picklist-values-by-record-type
+			endpoint: "Housing Assessment" has both previously-"missing"
+			values enabled; "ECM Assessment" does not.
+
+			Queried once per run, not per record / this never changes
+			within a run, so there's no reason to repeat it per assessment
+			the way the per-record queries elsewhere in this flow do.
+			DeveloperName used instead of the raw Id since Ids are
+			sandbox/org-specific and would silently break in another
+			environment.
+		-->
+		<set-variable variableName="sfQuery" doc:name="Look Up Housing Assessment Record Type" doc:id="7091a2b3-c4d5-4e6f-7081-92a3b4c5d6e7"
+			value="SELECT Id FROM RecordType WHERE SobjectType = 'Assessment_PLI__c' AND DeveloperName = 'Housing_Assessment_PLI'" />
+		<flow-ref doc:name="Query Housing Assessment Record Type" doc:id="8192a3b4-c5d6-4f70-8192-a3b4c5d6e7f8" name="salesforce-query-operation-sub-flow" />
+		<set-variable variableName="housingAssessmentRecordTypeId" doc:name="Capture Record Type Id" doc:id="92a3b4c5-d6e7-4081-92a3-b4c5d6e7f809"
+			value="#[(payload default [])[0].Id]" />
 
 		<parallel-foreach doc:name="Parallel For Each on assessmentRecords" doc:id="25d6e7f8-091a-42a3-c4d5-e7f8091a2b3c" collection="#[vars.assessmentRecords]" maxConcurrency="1">
 
@@ -72,8 +134,8 @@ output application/json
 				overwrites payload with its own result. The referral flow gets
 				away without this because its per-item payload is a bare user-id
 				string it doesn't need again after the query; assessments carry
-				the whole record (CIN, last name, DOB) through to member-matching
-				and the final upsert mapping.
+				the whole record through to member-matching and the final
+				upsert mapping.
 			-->
 			<set-variable value="#[payload]" doc:name="matchRecord" doc:id="691a2b3c-4d5e-46e7-0819-2b3c4d5e6f70" variableName="matchRecord" />
 
@@ -107,22 +169,66 @@ output application/json
 						create one record which is assessment nothing else...
 						if other things are blank then leave it blank."
 					-->
-					<set-variable variableName="sfObject" doc:name="Set sfObject" doc:id="1e6f7081-92a3-4b3c-5d64-708192a3b4c5" value="Housing_Assessment__c" />
+					<set-variable variableName="sfObject" doc:name="Set sfObject" doc:id="1e6f7081-92a3-4b3c-5d64-708192a3b4c5" value="Assessment_PLI__c" />
 					<set-variable variableName="externalId" doc:name="Set externalId" doc:id="2f708192-a3b4-4c4d-6e75-8192a3b4c5d6" value="CIE_Assessment_ID__c" />
 
 					<ee:transform doc:name="Assessment Mapping" doc:id="3081920a-3b4d-4c5e-7f86-92a3b4c5d6e7">
 						<ee:message>
 							<ee:set-payload><![CDATA[%dw 2.0
 output application/java
+
+/*
+	Cosmetic CIE-to-Salesforce value differences, found during full-flow
+	testing on 2026-08-19 and confirmed by Toshiv Shrivastava as wording-only
+	(not a data/business distinction) / handled here on our side rather
+	than as a Salesforce picklist change, since it's just punctuation/wording,
+	not a new valid answer. Unmapped values pass through unchanged, so a
+	value CIE hasn't sent yet (or a value that already matches) is untouched
+	rather than silently dropped.
+
+	Add here, do NOT wait on a Salesforce picklist edit, when a mismatch
+	turns out to be pure wording. Do escalate to Toshiv/Niranja instead when
+	CIE has no valid equivalent at all (a real business/mapping decision) --
+	see the four items already resolved in that channel on 2026-08-19.
+*/
+var singlePicklistValueMap = {
+	"Place not meant for human habitation (street, car, tent, park, uninhabitable RV/boat (no electricity/water)":
+		"Place not meant for human habitation (street, car, tent, park, uninhabitable RV/boat, no electricity/water)"
+}
+var multiPicklistValueMap = {
+	"Home purchase and housing financing counseling": "Home purchase and financing counseling"
+}
+fun normalizeSingle(value) = if (value == null) null else (singlePicklistValueMap[value] default value)
+fun normalizeMulti(value) = if (value == null) null else
+	((value splitBy ";") map ((token) -> multiPicklistValueMap[token] default token)) joinBy ";"
 ---
 {
 	CIE_Assessment_ID__c: vars.matchRecord.sourceId,
-	Member__c: vars.matchedMemberId default null,
-	Case__c: vars.associatedCaseId default null
-	// Remaining HO_* assessment fields map here once the final Salesforce
-	// field API names are confirmed (New CIE Integration Phase 1 Data
-	// Mapping workbook). Not covered on the 2026-08-18 call, which focused
-	// on the user gate / matching / case association / upsert mechanics.
+	RecordTypeId: vars.housingAssessmentRecordTypeId,
+	Member_PLI__c: vars.matchedMemberId default null,
+	Case_PLI__c: vars.associatedCaseId default null,
+	Current_Housing_Situation_PLI__c: vars.matchRecord.housingConcern,
+	Current_Safety_Status_PLI__c: vars.matchRecord.safetyInCurrentSituation,
+	Housing_Immediate_Threat_PLI__c: vars.matchRecord.immediateThreat,
+	Housing_Need_Urgency_PLI__c: vars.matchRecord.immediacyOfNeed,
+	Current_Housing_Type_PLI__c: normalizeSingle(vars.matchRecord.currentLivingSituation),
+	Recent_Housing_Change_PLI__c: vars.matchRecord.livingSituationChanged30Days,
+	Current_Stay_Duration_PLI__c: vars.matchRecord.timeLeftToStay,
+	Homeless_Past_3_Years_PLI__c: vars.matchRecord.pastExperienceOfHomelessness,
+	Homeless_Duration_3_Yrs_PLI__c: vars.matchRecord.monthsOfHomelessness,
+	Last_Rental_Ownership_PLI__c: vars.matchRecord.lastTimeHadALease,
+	Housing_Subsidy_Type_PLI__c: vars.matchRecord.subsidyForRentOrOwn,
+	Housing_Loss_Risk_Timeframe_PLI__c: vars.matchRecord.riskOfLosingHousing,
+	Housing_Expense_Tradeoff_PLI__c: vars.matchRecord.housingPrioritization,
+	Housing_Financial_Barriers_PLI__c: vars.matchRecord.financialBarriers,
+	Housing_Barriers_Ongoing_PLI__c: vars.matchRecord.pastOrOnGoingBarriers,
+	Housing_Barriers_Current_PLI__c: vars.matchRecord.suddenEventBarriers,
+	Housing_Support_Resources_PLI__c: vars.matchRecord.housingSupports,
+	Prior_Resource_Use_PLI__c: vars.matchRecord.pastHousingResourceUtilization,
+	Current_Resource_Use_PLI__c: vars.matchRecord.currentHousingResourceUtilization,
+	Housing_Program_Knowledge_PLI__c: vars.matchRecord.housingResourceKnowledge,
+	Housing_Budget_Comfort_PLI__c: vars.matchRecord.housingBudgetKnowledge,
+	Housing_Resources_Needed_PLI__c: normalizeMulti(vars.matchRecord.desiredHousingResources)
 }]]></ee:set-payload>
 						</ee:message>
 					</ee:transform>
