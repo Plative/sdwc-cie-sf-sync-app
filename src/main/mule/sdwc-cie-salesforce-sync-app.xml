@@ -16,4 +16,18 @@
 		<flow-ref doc:name="cie-referral-salesforce-sync-main-sub-flow" doc:id="07bafce3-e62b-479a-bb89-29c48e1f9e55" name="cie-referral-salesforce-sync-main-sub-flow"/>
 		<logger level="INFO" doc:name="END" doc:id="af1603af-7db4-4b03-aff1-80a5ad074995" message='#["END : CIE Referral sync to Salesforce"]'/>
 </flow>
+
+	<flow name="cie-assessment-salesforce-sync" doc:name="CIE Assessment Salesforce Sync"
+        doc:description="Polls CIE for Housing Deposit assessments created by SDWC/Wellness Collaborative users, matches each to a Salesforce Member and open Case, and upserts the assessment record">
+
+        <scheduler doc:name="Poll schedule for CIE Assessment"
+            doc:description="Same fixed-interval convention as the referral flow; no cadence was specified for this flow either">
+            <scheduling-strategy>
+                <fixed-frequency frequency="300000" />
+            </scheduling-strategy>
+        </scheduler>
+	<logger level="INFO" doc:name="START" doc:id="71829304-1526-4374-8596-071829304152" message='#["START : CIE Assessment sync to Salesforce"]'/>
+		<flow-ref doc:name="cie-assessment-salesforce-sync-main-sub-flow" doc:id="82930415-2637-4485-9607-182930415263" name="cie-assessment-salesforce-sync-main-sub-flow"/>
+		<logger level="INFO" doc:name="END" doc:id="93041526-3748-4596-a718-293041526374" message='#["END : CIE Assessment sync to Salesforce"]'/>
+</flow>
 </mule>

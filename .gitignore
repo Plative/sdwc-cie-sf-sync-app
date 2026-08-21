@@ -45,3 +45,9 @@ target/
 .mule/
 .DS_Store
 velocity.log
+.tooling-project
+
+# ------------------------------------------ #
+# Design docs / working scaffold, not source #
+# ------------------------------------------ #
+Plative CIE Integration Design/

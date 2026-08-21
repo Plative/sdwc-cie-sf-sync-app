@@ -15,3 +15,6 @@ cie:
   referrals:
     method: "GET"
     path: "/active-bpel/rt/SDWC_GetReferralOutcomeList"
+  assessments:
+    method: "GET"
+    path: "/active-bpel/rt/SDWC_GetAssessmentList"

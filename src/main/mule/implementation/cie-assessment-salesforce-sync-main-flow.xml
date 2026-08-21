@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!--
+		Flow A: Housing Assessment ingestion. Rebuilt per the 2026-08-18
+		SDWC/Plative working sync (Jacob Belizario, Niranja Nair), which is
+		the authoritative walkthrough for this flow / more specific than the
+		general technical design on member matching and on what gets created
+		when a match fails. Mirrors cie-referral-salesforce-sync-main-flow.xml's
+		overall shape (httpOperation transform -> common-requester -> per-record
+		loop -> CIE User ID gate) plus two steps referrals don't have: member
+		matching and Case association.
+
+		Five steps confirmed on the call, in order:
+		1. Check CIE User ID match (creatingCieUserId against Salesforce User's
+		   external id field). No match -> drop the record, nothing created.
+		2. (Handled by the upsert below) Check if the Assessment already
+		   exists by external id, so a status update never creates a duplicate.
+		3. Member matching / see member-matching-operation.xml. No match ->
+		   do NOT create a Person Account. Leave the Member lookup blank and
+		   still create the Assessment.
+		4. Case association / see case-association-operation.xml. Only
+		   attempted when a Member was matched. No open Case -> leave the
+		   Case lookup blank, do NOT create a Case.
+		5. Create/update the Assessment record. Per the call, this is the
+		   ONLY record this flow creates ("I'm only to create one record...
+		   if other things are blank then leave it blank"). No separate
+		   Exception/Staging or Integration Log object / logging here
+		   follows the same logger-only convention already used in the
+		   referral flow.
+
+		PLACEHOLDER: the CIE assessment payload shape below
+		(payload.assessment_list, item.client_id, item.created_by_id, etc.)
+		is inferred from the technical design and data-mapping workbook, not
+		confirmed against a real response / the Assessment API endpoint/dev
+		credentials are still a pending item. Update field names once CIE
+		delivers test data. The Salesforce field names below
+		(Housing_Assessment__c, CIE_Assessment_ID__c, Member__c, Case__c,
+		Program_Enrollment__c) are likewise placeholders pending confirmation
+		against the real org.
+	-->
+	<sub-flow name="cie-assessment-salesforce-sync-main-sub-flow" doc:id="e1f2a3b4-c5d6-4708-8192-a3b4c5d6e7f8">
+
+		<ee:transform doc:name="httpOperation" doc:id="f2a3b4c5-d6e7-4819-92a3-b4c5d6e7f809">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpOperation"><![CDATA[%dw 2.0
+output application/json
+---
+{
+	method : Mule::p('cie.assessments.method'),
+	host: Mule::p('cie.host'),
+	port: Mule::p('cie.port'),
+	path : Mule::p('cie.assessments.path')
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="Get CIE Assessments" doc:id="03b4c5d6-e7f8-4091-a2b3-c5d6e7f80910" name="common-requester-sub-flow" />
+
+		<set-variable value="#[%dw 2.0&#10;output application/java&#10;---&#10;payload.assessment_list default [] map (item) -&gt; {&#10;	sourceId: item.assessment_id,&#10;	cieClientId: item.client_id,&#10;	medicaidCin: item.medicaid_cin,&#10;	lastName: item.last_name,&#10;	dob: item.dob,&#10;	creatingCieUserId: item.created_by_id&#10;}]"
+			doc:name="assessmentRecords" doc:id="14c5d6e7-f809-4192-b3c4-d6e7f8091a2b" variableName="assessmentRecords" />
+
+		<parallel-foreach doc:name="Parallel For Each on assessmentRecords" doc:id="25d6e7f8-091a-42a3-c4d5-e7f8091a2b3c" collection="#[vars.assessmentRecords]" maxConcurrency="1">
+
+			<!--
+				Capture the current record before the Query User call below
+				overwrites payload with its own result. The referral flow gets
+				away without this because its per-item payload is a bare user-id
+				string it doesn't need again after the query; assessments carry
+				the whole record (CIN, last name, DOB) through to member-matching
+				and the final upsert mapping.
+			-->
+			<set-variable value="#[payload]" doc:name="matchRecord" doc:id="691a2b3c-4d5e-46e7-0819-2b3c4d5e6f70" variableName="matchRecord" />
+
+			<set-variable value="#[&quot;SELECT CIE_user_id__c, id&#10;&#10;FROM user where CIE_user_id__c = '&quot; ++ vars.matchRecord.creatingCieUserId ++&quot;'&quot;]"
+				doc:name="sfQuery" doc:id="36e7f809-1a2b-43b4-d5e6-f8091a2b3c4d" variableName="sfQuery" />
+			<flow-ref doc:name="Query User" doc:id="47f8091a-2b3c-44c5-e6f7-091a2b3c4d5e" name="salesforce-query-operation-sub-flow" />
+
+			<choice doc:name="CIE User exists in Salesforce?" doc:id="58091a2b-3c4d-45d6-f708-1a2b3c4d5e6f">
+				<when expression="#[!isEmpty(payload)]">
+
+					<flow-ref doc:name="Run Member Matching" doc:id="7a2b3c4d-5e6f-47f8-1920-3c4d5e6f7081" name="member-matching-sub-flow" />
+
+					<!--
+						Case association only makes sense once a Member is
+						resolved (the query needs vars.matchedMemberId). No
+						match -> skip the query entirely and leave the Case
+						lookup blank, same as an unmatched Member.
+					-->
+					<choice doc:name="Member Matched?" doc:id="8b3c4d5e-6f70-4809-2a31-4d5e6f708192">
+						<when expression="#[vars.matchedMemberId != null]">
+							<flow-ref doc:name="Run Case Association" doc:id="9c4d5e6f-7081-491a-3b42-5e6f708192a3" name="case-association-sub-flow" />
+						</when>
+						<otherwise>
+							<set-variable variableName="associatedCaseId" doc:name="No Member: Case Lookup Blank" doc:id="0d5e6f70-8192-4a2b-4c53-6f708192a3b4" value="#[null]" />
+						</otherwise>
+					</choice>
+
+					<!--
+						Always create/update the Assessment record from here,
+						regardless of match outcome. Per the call: "I'm only to
+						create one record which is assessment nothing else...
+						if other things are blank then leave it blank."
+					-->
+					<set-variable variableName="sfObject" doc:name="Set sfObject" doc:id="1e6f7081-92a3-4b3c-5d64-708192a3b4c5" value="Housing_Assessment__c" />
+					<set-variable variableName="externalId" doc:name="Set externalId" doc:id="2f708192-a3b4-4c4d-6e75-8192a3b4c5d6" value="CIE_Assessment_ID__c" />
+
+					<ee:transform doc:name="Assessment Mapping" doc:id="3081920a-3b4d-4c5e-7f86-92a3b4c5d6e7">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+	CIE_Assessment_ID__c: vars.matchRecord.sourceId,
+	Member__c: vars.matchedMemberId default null,
+	Case__c: vars.associatedCaseId default null
+	// Remaining HO_* assessment fields map here once the final Salesforce
+	// field API names are confirmed (New CIE Integration Phase 1 Data
+	// Mapping workbook). Not covered on the 2026-08-18 call, which focused
+	// on the user gate / matching / case association / upsert mechanics.
+}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<flow-ref doc:name="Upsert Assessment" doc:id="4192a3b4-c5d6-4d6f-8a97-a3b4c5d6e7f8" name="salesforce-upsert-operation-sub-flow" />
+
+					<logger level="INFO" doc:name="Assessment Sync Result" doc:id="52a3b4c5-d6e7-4e70-9ba8-b4c5d6e7f809"
+						message='#[output application/json&#10;---&#10;{&#10;	message: "Assessment synced",&#10;	sourceId: vars.matchRecord.sourceId,&#10;	matchedMemberId: vars.matchedMemberId default null,&#10;	matchTier: vars.matchTier default 0,&#10;	caseId: vars.associatedCaseId default null&#10;}]' />
+
+				</when>
+				<otherwise>
+					<logger level="INFO" doc:name="No CIE User ID Match" doc:id="63b4c5d6-e7f8-4f81-acb9-c5d6e7f8091a" message='#[output application/json&#10;---&#10;{&#10;	Message : "No CIE User ID Match in Salesforce"&#10;}]' />
+				</otherwise>
+			</choice>
+
+		</parallel-foreach>
+	</sub-flow>
+</mule>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+
+	<!--
+		Case association for housing assessments, per the 2026-08-18 SDWC/Plative
+		sync (Jacob Belizario, Niranja Nair). Only called after
+		member-matching-sub-flow resolves a Member / referrals never call this.
+
+		Confirmed on the call: query the member's active Housing Deposit
+		enrollment, find its associated Case, and link the assessment to it.
+		If there's no enrollment or no case, do NOT create one / just leave
+		the Case lookup blank on the assessment ("you don't have to create a
+		case... you just create the assessment with blank case lookup").
+
+		Caller contract: vars.matchedMemberId set to a non-null Account Id.
+
+		Sets:
+			vars.associatedCaseId   Case Id, or null if no open enrollment/case found
+	-->
+	<sub-flow name="case-association-sub-flow" doc:id="1a2b3c4d-5e6f-4708-8192-a3b4c5d6e7f8">
+
+		<logger level="INFO" doc:name="Before Case Association" doc:id="2b3c4d5e-6f70-4819-92a3-b4c5d6e7f809"
+			message='#["Before Case Association. member=" ++ (vars.matchedMemberId default "null")]' />
+
+		<set-variable variableName="sfQuery" doc:name="Active Housing Deposit Enrollment Query" doc:id="3c4d5e6f-7081-4a2b-a3b4-c5d6e7f80910"
+			value="#[&quot;SELECT Id, Case__c FROM Program_Enrollment__c WHERE Member__c = '&quot; ++ vars.matchedMemberId ++ &quot;' AND Status__c = 'Active' AND Program__r.Name = 'Housing Deposit'&quot;]" />
+		<flow-ref doc:name="Query Active Enrollment" doc:id="4d5e6f70-8192-4b3c-b4c5-d6e7f8091a2b" name="salesforce-query-operation-sub-flow" />
+
+		<choice doc:name="Enrollment and Case Found?" doc:id="5e6f7081-92a3-4c4d-c5d6-e7f8091a2b3c">
+			<when expression="#[sizeOf(payload default []) == 1 and (payload default [])[0].Case__c != null]">
+				<set-variable variableName="associatedCaseId" doc:name="Set Associated Case" doc:id="6f708192-a3b4-4d5e-d6e7-f8091a2b3c4d"
+					value="#[(payload default [])[0].Case__c]" />
+			</when>
+			<otherwise>
+				<set-variable variableName="associatedCaseId" doc:name="No Case Found" doc:id="92a3b4c5-d6e7-4081-0910-2b3c4d5e6f70" value="#[null]" />
+				<logger level="INFO" doc:name="No Case Found Logged" doc:id="c5d6e7f8-091a-43b4-3243-5e6f708192a3"
+					message='#["No active Housing Deposit enrollment/case found for member " ++ vars.matchedMemberId ++ ". Assessment will be created with a blank Case lookup."]' />
+			</otherwise>
+		</choice>
+
+		<logger level="INFO" doc:name="After Case Association" doc:id="d6e7f809-1a2b-44c5-4354-6f708192a3b4"
+			message='#[output application/json&#10;---&#10;{&#10;	message: "After Case Association",&#10;	caseId: vars.associatedCaseId default null&#10;}]' />
+
+	</sub-flow>
+
+</mule>
