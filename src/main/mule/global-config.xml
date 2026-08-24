@@ -43,4 +43,12 @@ http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/sc
 				tokenUrl="${salesforce.tokenUrl}"/>
 		</salesforce:oauth-client-credentials-connection>
 	</salesforce:sfdc-config>
+	<os:object-store name="Object_store" doc:name="Object store" doc:id="cfa5268b-ff58-4cd9-9d41-61ad2f32f428" maxEntries="10" entryTtl="30" expirationInterval="10" expirationIntervalUnit="DAYS" config-ref="ObjectStore_Config" entryTtlUnit="DAYS"/>
+	<os:config name="ObjectStore_Config" doc:name="ObjectStore Config" doc:id="fc7eeed6-094b-408d-a09e-e8a724b06f84" >
+		<os:connection >
+			<reconnection >
+				<reconnect />
+			</reconnection>
+		</os:connection>
+	</os:config>
 </mule>

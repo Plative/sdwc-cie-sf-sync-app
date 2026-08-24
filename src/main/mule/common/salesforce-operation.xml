@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce" xmlns:snowflake="http://www.mulesoft.org/schema/mule/snowflake"
-	xmlns="http://www.mulesoft.org/schema/mule/core"
-	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:snowflake="http://www.mulesoft.org/schema/mule/snowflake"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
 http://www.mulesoft.org/schema/mule/snowflake http://www.mulesoft.org/schema/mule/snowflake/current/mule-snowflake.xsd
-http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd">
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 	<sub-flow name="salesforce-query-operation-sub-flow" doc:id="ccd99d6a-8800-494a-ba07-ad5ef68b0853" >
 		<logger level="INFO" doc:name="Before Salesforce Query Operation" doc:id="129cdcab-6c3b-4ef4-bee2-ca077e2c231b" message='#["Before Salesforce Query Operation"]'/>
 		<salesforce:query doc:name="Query" doc:id="b0b9d28f-1206-4e3d-bd7b-5643f2ef5b9c" config-ref="Salesforce_Core_Config">
@@ -16,5 +17,133 @@ http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mu
 		<logger level="INFO" doc:name="Before Salesforce Upsert Operation" doc:id="edda21f2-04d4-46ea-9e41-ac3cd725ae45" message='#["Before Salesforce Upsert Operation"]' />
 		<salesforce:upsert doc:name="Upsert" doc:id="a2c81c93-fa4d-443a-ab9d-75b114fef119" config-ref="Salesforce_Core_Config" objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]"/>
 		<logger level="INFO" doc:name="After Salesforce Upsert Operation" doc:id="3e1adfb9-0de5-49bd-92c5-e1208b09a4b0" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Upsert Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]' />
+	</sub-flow>
+	<sub-flow name="log-error-in-salesforce-sub-flow" doc:id="8d0c1efc-0606-4681-8735-ab4fd1f1aedc" >
+		<try doc:name="Try" doc:id="9742abd5-2fbb-46af-b3e4-f77fa6e9db65" >
+			<salesforce:create type="Integration_Log__c" doc:name="create integration_error__c" doc:id="cb65bd5a-722f-4426-8c5a-3398665adae0" config-ref="Salesforce_Core_Config" >
+				<salesforce:records ><![CDATA[#[vars.salesforceErrorLog]]]></salesforce:records>
+			</salesforce:create>
+			<ee:transform doc:name="Classify Upsert Results" doc:id="6f4326d5-1d16-4366-9f08-71ce3b755824" >
+				<ee:message >
+					<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+var upsertItems     = payload.items
+var successCount = sizeOf(upsertItems filter $.successful == true)
+var failureCount = sizeOf(upsertItems filter $.successful == false)
+---
+{
+    object: "Integration_Error__c",
+    totalRecords: sizeOf(upsertItems),
+    successCount: successCount,
+    failureCount: failureCount,
+    details: upsertItems map (pair,index) -> {
+    	success: pair.successful,
+        salesforceId: pair.id,
+        created: pair.payload.created,
+        errorStatus: pair.statusCode,
+        errorMessage: pair.message
+    }
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="INFO" doc:name="log error created" doc:id="3961acb9-204c-4cc3-9e5a-a700d8b09ddd" message="#[payload]" />
+			<error-handler >
+				<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="3637b0df-2bad-4f21-866b-fd6ea42494b2" >
+					<ee:transform doc:name="payload" doc:id="f90560e9-f4bb-4cb0-bb6a-89aed01c5be3" >
+						<ee:message >
+							<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+var successCount = 0
+var failureCount = 1
+---
+{
+    object: "Integration_Error__c",
+    totalRecords: failureCount,
+    successCount: successCount,
+    failureCount: failureCount,
+    details: [{
+    	success: false,
+        salesforceId: null,
+        created: null,
+        errorStatus: error.errorType.namespace ++ ":" ++ error.errorType.identifier,
+        errorMessage: error.description
+    }]
+}]]></ee:set-payload>
+						</ee:message>
+						<ee:variables >
+							<ee:set-variable variableName="successCount" ><![CDATA[0]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<logger level="ERROR" doc:name="log error Failed" doc:id="86584d29-376f-4d47-98cd-566d561c7dea" message="#[payload]" />
+				</on-error-continue>
+			</error-handler>
+		</try>
+	</sub-flow>
+	<sub-flow name="common-salesforce-upsert-operation-sub-flow" doc:id="38baab1d-c549-461a-9bc1-53cda64b1597" >
+		<logger level="INFO" doc:name="Before Salesforce Upsert Operation" doc:id="7d3f0b86-1f1c-4a87-baf6-2288b3233bff" message='#["Before Salesforce Upsert Operation"]' />
+		<set-variable value="#[payload]" doc:name="Save originalPayload" doc:id="7e5f7411-12d3-49e4-b46a-df412f7fb671" variableName="originalPayload" />
+		<try doc:name="Try" doc:id="d3b55226-0254-4440-b76c-94aca5d9d80a" >
+			<salesforce:upsert objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]" doc:name="Upsert" doc:id="2de4cca7-84f6-4001-87d6-e578ca6c33b0" config-ref="Salesforce_Core_Config" />
+			<ee:transform doc:name="Classify Upsert Results" doc:id="ddb4cd11-1a4b-42c1-8f6f-ef561373d7b9" >
+				<ee:message >
+					<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+var upsertItems     = payload.items
+var originalRecords = (vars.originalPayload default []) as Array
+var zipped    = upsertItems zip originalRecords
+var successCount = sizeOf(upsertItems filter $.successful == true)
+var failureCount = sizeOf(upsertItems filter $.successful == false)
+---
+{
+    object: vars.sfObject,
+    totalRecords: sizeOf(upsertItems),
+    successCount: successCount,
+    failureCount: failureCount,
+    details: zipped map (pair,index) -> {
+		uniqueIdentifier: vars.externalId,
+    	uniqueIdentifierValue: vars.originalPayload[vars.externalId][index],
+    	success: pair[0].successful,
+        salesforceId: pair[0].id,
+        created: pair[0].payload.created,
+        errorStatus: pair[0].statusCode,
+        errorMessage: pair[0].message
+    }
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<error-handler >
+				<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="34d0a7e3-3536-4802-8d96-028cc6946cce" >
+					<ee:transform doc:name="payload" doc:id="b4b9816a-36e8-4897-b2dc-964ccc59a223" >
+						<ee:message >
+							<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+var originalRecords = (vars.originalPayload default []) as Array
+var successCount = 0
+var failureCount = sizeOf(originalRecords)
+---
+{
+    object: vars.sfObject,
+    totalRecords: failureCount,
+    successCount: successCount,
+    failureCount: failureCount,
+    details: originalRecords map (pair,index) -> {
+		uniqueIdentifier: vars.externalId,
+    	uniqueIdentifierValue: pair[vars.externalId],
+    	success: false,
+        salesforceId: null,
+        created: null,
+        errorStatus: error.errorType.namespace ++ ":" ++ error.errorType.identifier,
+        errorMessage: error.description
+    }
+}]]></ee:set-payload>
+						</ee:message>
+						<ee:variables >
+							<ee:set-variable variableName="successCount" ><![CDATA[0]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				</on-error-continue>
+			</error-handler>
+		</try>
+		<logger level="INFO" doc:name="Log Upsert Success Summary" doc:id="b794910c-ef17-4515-bf93-7d7f7651b2d6" message='#[%dw 2.0&#10;output application/json&#10;---&#10;{&#10;    message: "Salesforce Upsert Batch Complete",&#10;    payload: payload&#10;}]' />
 	</sub-flow>
 </mule>
