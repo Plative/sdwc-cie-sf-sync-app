@@ -63,8 +63,8 @@ var payload = vars.cieReferral
     CIE_Referral_Method_PLI__c: payload.referral_method,
     ClientId: payload.account_id,
     ReferralType: "Internal",
-    Source: "CIE Integration",
-    LastModifiedById: payload.referral_id
+    Source: "CIE Integration"
+    //LastModifiedById: payload.referral_id
 }]]]></ee:set-payload>
 						</ee:message>
 						<ee:variables >
