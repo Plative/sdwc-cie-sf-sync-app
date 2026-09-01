@@ -119,7 +119,7 @@ var failureCount = sizeOf(upsertItems filter $.successful == false)
 						<ee:message >
 							<ee:set-payload ><![CDATA[%dw 2.0
 output application/json
-var originalRecords = (vars.originalPayload default []) as Array
+var originalRecords = ([vars.cieReferral] default []) as Array
 var successCount = 0
 var failureCount = sizeOf(originalRecords)
 ---
