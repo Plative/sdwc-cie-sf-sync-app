@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+	<sub-flow name="member-matching-process-sub-flow" doc:id="70808e69-fd71-430c-824d-9ec5ce9d4e86">
+		<set-variable value="#[%dw 2.0&#10;output application/java&#10;&#10;// 1. Build the Id condition (if it exists)&#10;var idCondition = if (!isEmpty(vars.cieReferral.account_id)) &#10;    &quot;CIE_Client_ID__c = '&quot; ++ vars.cieReferral.account_id ++ &quot;'&quot; &#10;else null&#10;&#10;// 2. Build the secondary conditions dynamically, ignoring empty fields&#10;var fallbackList = [&#10;    if (!isEmpty(vars.cieReferral.last_name)) &quot;LastName = '&quot; ++ vars.cieReferral.last_name ++ &quot;'&quot; else null,&#10;    if (!isEmpty(vars.cieReferral.Medi_Cal_CIN)) &quot;Medi_Cal_ID__pc = '&quot; ++ vars.cieReferral.Medi_Cal_CIN ++ &quot;'&quot; else null,&#10;    if (!isEmpty(vars.cieReferral.birthdate)) &quot;PersonBirthdate = &quot; ++ (vars.cieReferral.birthdate replace &quot;Z&quot; with &quot;&quot;) else null&#10;] filter ($ != null)&#10;&#10;// 3. Wrap the secondary conditions in parentheses and join them with AND (if any exist)&#10;var fallbackGroup = if (sizeOf(fallbackList) &gt; 0) &#10;    &quot;(&quot; ++ (fallbackList joinBy &quot; AND &quot;) ++ &quot;)&quot; &#10;else null&#10;&#10;// 4. Combine the Id condition and the secondary group with OR&#10;var finalConditions = [idCondition, fallbackGroup] filter ($ != null) joinBy &quot; OR &quot;&#10;&#10;---&#10;// Append to the base query&#10;if (!isEmpty(finalConditions)) &#10;    &quot;SELECT Id FROM Account WHERE &quot; ++ finalConditions&#10;else &#10;    &quot;SELECT Id FROM Account LIMIT 0&quot; // Safe fallback if all variables are completely empty]" doc:name="Query Member Account" doc:id="6a55a415-115f-4a28-8ee8-152ab6bd1bad" variableName="sfQuery" />
+		<flow-ref doc:name="Check Account Member?" doc:id="2f772b71-50d1-4a4b-8a44-2c3d996b047b" name="salesforce-query-operation-sub-flow" />
+		<choice doc:name="Single Match?" doc:id="dfb8b7e1-0867-44f2-9e38-f741bc49ed5e">
+					<when expression="#[sizeOf(payload default []) == 1]">
+						<set-variable variableName="matchedMemberId" doc:name="matchedMemberId" doc:id="2aea1929-5c8e-42e5-9c94-4c3aa4c2d7db" value="#[(payload default [])[0].Id]" />
+					</when>
+					<otherwise>
+						<set-variable variableName="matchedMemberId" doc:name="matchedMemberId = null" doc:id="c06b4088-2123-4784-816b-3f98a24e4236" value="#[null]" />
+					</otherwise>
+				</choice>
+
+	
+</sub-flow>	
+</mule>

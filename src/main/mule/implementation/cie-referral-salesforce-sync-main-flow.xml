@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
-	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
-	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
-	<sub-flow name="cie-referral-salesforce-sync-main-sub-flow" doc:id="ba0253b8-b438-4669-ae41-cb24b273c781" >
-		<ee:transform doc:name="httpOperation" doc:id="f6923aa6-f5ca-4289-8b8a-cb63f0484112" >
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+	<sub-flow name="cie-referral-salesforce-sync-main-sub-flow" doc:id="1a4a3dfa-2180-4068-a83e-09a5ba1a2d51" >
+		<set-variable value="#[(now() &gt;&gt; 'UTC') as String {format: &quot;yyyy-MM-dd'T'HH:mm:ss.SSS'Z'&quot;}]" doc:name="currentTimeStamp" doc:id="1dbf3e8b-f278-47cb-93ad-b340f5406b3e" variableName="currentTimeStamp" />
+		<os:retrieve doc:id="1b6879ad-8779-4a8d-9e39-915537a2f582" key="lastModifiedDate_referral" objectStore="Object_store" doc:name="lastModifiedDate referral" target="lastModifiedDate">
+			<os:default-value><![CDATA[#['1000-01-01T00:00:00.000Z' as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"}]]]></os:default-value>
+		</os:retrieve>
+		<ee:transform doc:name="httpOperation" doc:id="41fa4c30-5f87-4fc6-ba4e-e58198a7859a" >
 			<ee:message >
 			</ee:message>
 			<ee:variables >
@@ -16,33 +21,93 @@ output application/json
 	method : Mule::p('cie.referrals.method'),
 	host: Mule::p('cie.host'),
 	port: Mule::p('cie.port'),
-	path : Mule::p('cie.referrals.path')
+	path : Mule::p('cie.referrals.path'),
+	params: {
+		lastModifiedDate: vars.lastModifiedDate
+	}
 }]]></ee:set-variable>
 			</ee:variables>
 		</ee:transform>
-		<flow-ref doc:name="Get CIE Referral" doc:id="2db83f10-f3ec-4ffd-951d-7ab130654cd7" name="common-requester-sub-flow"/>
-		<set-variable value="#[%dw 2.0&#10;output application/json&#10;---&#10;payload.referral_outcome_list map ((item, index) -&gt; item.created_by_id)]" doc:name="cieReferralId" doc:id="e7cc5e8d-4afa-4554-8dfb-a3de5378f470" variableName="cieReferralId"/>
-		<parallel-foreach doc:name="Parallel For Each on cieReferralId" doc:id="3d013f5c-0156-4b1c-9b14-afc592eca948" collection="#[vars.cieReferralId]" maxConcurrency="1">
-			<set-variable value="#[&quot;SELECT CIE_user_id__c, id&#10;&#10;FROM user where CIE_user_id__c = '&quot; ++ payload ++&quot;'&quot;]" doc:name="sfQuery" doc:id="968c134d-d12d-49e2-8008-d60ef8e30855" variableName="sfQuery" />
-			<flow-ref doc:name="Query User" doc:id="4b252cf9-3110-4b1a-92a5-02d833ba73f2" name="salesforce-query-operation-sub-flow" />
-			<choice doc:name="CIE User exists in Ssalesforce?" doc:id="63d5eafe-408f-4e4c-ab38-b9e9a62d578e" >
+		<flow-ref doc:name="Get CIE Referral" doc:id="d94adb20-13b8-437f-8773-0c2a16555ed9" name="common-requester-sub-flow" target="cieReferralRecords"/>
+		<logger level="INFO" doc:name="Record Count" doc:id="48cd2e8c-64bc-4b5f-b61c-8ecb255641a4" message="#[%dw 2.0&#10;output application/json&#10;---&#10;{	&#10;	UUID: correlationId,&#10;	cieReferralRecordCount: vars.cieReferralRecords.totalSize&#10;}]"/>
+		<parallel-foreach doc:name="Parallel For Each on cieReferral" doc:id="02322746-0969-4b95-b7ef-55e12c0b0bf5" collection="#[vars.cieReferralRecords.referral_outcome_list]" maxConcurrency="1">
+			<set-variable value="#[%dw 2.0&#10;output application/json&#10;---&#10;payload]" doc:name="cieReferral" doc:id="86bab059-fe84-466e-9ceb-0b4a2fd50f7d" variableName="cieReferral" />
+			<set-variable value="#[&quot;SELECT CIE_user_id__c, id FROM user where CIE_user_id__c = '&quot; ++ vars.cieReferral.created_by_id ++&quot;'&quot;]" doc:name="Query User" doc:id="52f33c5f-a6a8-4228-8a9e-d764a46a2ff5" variableName="sfQuery" />
+			<flow-ref doc:name="Query User" doc:id="276e0881-411e-412a-a2ee-338c04ee30c9" name="salesforce-query-operation-sub-flow" />
+			<choice doc:name="CIE User exists in Ssalesforce?" doc:id="93befc28-967b-40c1-b758-4f027179142b" >
 				<when expression="#[!isEmpty(payload)]">
-					<ee:transform doc:name="Referral Mapping" doc:id="a4cd7ab1-aad0-41ea-ac48-e049b634ef9c">
+					<flow-ref doc:name="Check Account Member?" doc:id="d722d66f-a293-436a-9110-b27871e38ab9" name="member-matching-process-sub-flow"/>
+					<ee:transform doc:name="Referral Mapping" doc:id="8d312101-d099-4871-90bb-400844c4f9a6">
 						<ee:message>
 							<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var payload = vars.cieReferral
+---
+[{  CIE_Referral_ID__c: payload.referral_id,
+    CIE_Agent_Note_PLI__c: payload.agent_notes,
+    CIE_Appropriate_Referral_PLI__c: payload.appropriateness_referral,
+    CS_Referral_Notes__c: payload.referral_notes,
+    	CIE_Appropriateness_of_Referral_Note_PLI__c: payload.appropriateness_referral_notes,
+        CIE_Referral_Status__c: payload.referral_status,
+         CIE_Declined_Date_PLI__c: payload.declined_date as Date {format: "yyyy-MM-dd"} default null,
+         CIE_Accepted_Date_PLI__c: payload.accepted_date as Date {format: "yyyy-MM-dd"} default null,
+    Comments: payload.referral_notes,
+    CIE_Referral_Outcome_PLI__c: payload.outcome,
+    CIE_Referral_Outcome_Note_PLI__c: payload.outcome_notes,
+    CIE_Date_of_referral_outcome_PLI__c: payload.completed_date as Date {format: "yyyy-MM-dd"} default null,
+    CIE_Program_Entry_Date_PLI__c: payload.enrollment_entry_date as Date {format: "yyyy-MM-dd"} default null,
+    CIE_Reason_Client_was_not_Connected_PLI__c: payload.reason_not_connected,
+    ReferralDate: payload.referral_date as Date {format: "dd/MM/yyyy"} default null,
+    ReferrerName: payload.agency_name,
+    //ProgramId: payload.service_id,
+    CIE_Referral_Method_PLI__c: payload.referral_method,
+    ClientId: payload.account_id,
+    ReferralType: "Internal",
+    Source: "CIE Integration"
+    //LastModifiedById: payload.referral_id
+}]]]></ee:set-payload>
+						</ee:message>
+						<ee:variables >
+							<ee:set-variable variableName="externalId" ><![CDATA["CIE_Referral_ID__c"]]></ee:set-variable>
+							<ee:set-variable variableName="sfObject" ><![CDATA["Referral"]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<flow-ref doc:name="Upsert Referral" doc:id="dd6c7a2c-11d2-4ae0-9b31-60b7604435e5" name="common-salesforce-upsert-operation-sub-flow"/>
+					<choice doc:name="Choice" doc:id="8636d164-cb77-461a-8826-6a51c75fd4b5">
+								<when expression="#[payload.failureCount &gt; 0]">
+									<ee:transform doc:name="log error Salesoforce payload" doc:id="161d518e-ddf8-4fa5-91db-564dc0ca4ead">
+										<ee:message>
+										</ee:message>
+									<ee:variables>
+										<ee:set-variable variableName="salesforceErrorLog"><![CDATA[%dw 2.0
 output application/java
 ---
-{
-	
-}]]></ee:set-payload>
-						</ee:message>
-					</ee:transform>
-					<flow-ref doc:name="Upsert Referral" doc:id="b1ce1b39-cadf-4814-bde2-df75ee7e6646" name="salesforce-upsert-operation-sub-flow"/>
+[{
+    Record_Type__c: "Referral",
+    Entity_Type__c: "Referral",
+	External_Unique_Identifier__c: write(payload.details map {
+    	"Identifier": $.uniqueIdentifier,
+    	"Id": $.uniqueIdentifierValue
+    	},"application/json") as String,
+    Error_Message__c: (write(payload.details.errorMessage,"application/json") as String) default error.description,
+    Flow_Name__c: flow.name,
+    Error_Timestamp__c: now(),
+    Resolution_Status__c: "Open",
+    Correlation_Id__c: correlationId
+}]]]></ee:set-variable>
+									</ee:variables>
+									</ee:transform>
+							<flow-ref doc:name="log-error-in-salesforce-sub-flow" doc:id="28240178-65dc-4431-9ac4-bf3e43e4738b" name="log-error-in-salesforce-sub-flow"/>
+									</when>
+									</choice>
 				</when>
 				<otherwise >
-					<logger level="INFO" doc:name="No CIE User ID Match" doc:id="0ae0459a-0458-460c-a842-f6a13474c1ce" message='#[output application/json&#10;---&#10;{&#10;	Message : "No CIE User ID Match in Salesforce"&#10;}]'/>
+					<logger level="INFO" doc:name="No CIE User ID Match" doc:id="09a0e3cf-41c9-400b-9585-2666332f1881" message='#[output application/json&#10;---&#10;{&#10;	UUID : correlationId,&#10;	cieUserID : vars.cieReferral.created_by_id,&#10;	Message : "No CIE User ID Match in Salesforce"&#10;}]'/>
 				</otherwise>
 			</choice>
 		</parallel-foreach>
+		<os:store doc:id="91bf4fee-514e-4d15-9835-e167f5e9b725" key="lastModifiedDate_referral" objectStore="Object_store" doc:name="lastModifiedDate referral">
+				<os:value><![CDATA[#[vars.currentTimeStamp]]]></os:value>
+			</os:store>
 	</sub-flow>
 </mule>

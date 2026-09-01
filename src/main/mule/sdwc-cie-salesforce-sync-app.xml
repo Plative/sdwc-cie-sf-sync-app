@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
-	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 	    <flow name="cie-referral-salesforce-sync" doc:name="CIE Salesforce Order Sync"
         doc:description="Polls CIE for orders, converts the response to Java, and upserts records into Salesforce">
 
@@ -15,17 +16,43 @@
 	<logger level="INFO" doc:name="START" doc:id="a52d2aa6-9687-4496-ad5f-5f7bb14b19a9" message='#["START : CIE Referral sync to Salesforce"]'/>
 		<flow-ref doc:name="cie-referral-salesforce-sync-main-sub-flow" doc:id="07bafce3-e62b-479a-bb89-29c48e1f9e55" name="cie-referral-salesforce-sync-main-sub-flow"/>
 		<logger level="INFO" doc:name="END" doc:id="af1603af-7db4-4b03-aff1-80a5ad074995" message='#["END : CIE Referral sync to Salesforce"]'/>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="a16b902f-68a4-426c-86d8-d50405dadb08" >
+				<ee:transform doc:name="error payload" doc:id="4c9ef514-9506-4c68-8613-c333b42c0427" >
+					<ee:message />
+					<ee:variables >
+						<ee:set-variable variableName="salesforceErrorLog" ><![CDATA[%dw 2.0
+output application/java
+---
+[{
+    Record_Type__c: "cieReferral",
+    Entity_Type__c: "CIE Referral",
+    External_Unique_Identifier__c: write(vars.orderResponse.details map {
+    	"Identifier": $.uniqueIdentifier,
+    	"Id": $.uniqueIdentifierValue
+    	},"application/json") as String,
+    Error_Message__c: vars.orderResponse.details.errorMessage default error.description,
+    Flow_Name__c: flow.name,
+    Error_Timestamp__c: now(),
+    Resolution_Status__c: "Open",
+    Correlation_Id__c: correlationId
+}]]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref doc:name="log-error-in-salesforce-sub-flow" doc:id="221abfcb-5316-4035-94bc-925c9e2da841" name="log-error-in-salesforce-sub-flow"/>
+			</on-error-continue>
+		</error-handler>
 </flow>
 
 	<flow name="cie-assessment-salesforce-sync" doc:name="CIE Assessment Salesforce Sync"
         doc:description="Polls CIE for Housing Deposit assessments created by SDWC/Wellness Collaborative users, matches each to a Salesforce Member and open Case, and upserts the assessment record">
 
-        <scheduler doc:name="Poll schedule for CIE Assessment"
+        <!-- [STUDIO:"Poll schedule for CIE Assessment"]<scheduler doc:name="Poll schedule for CIE Assessment"
             doc:description="Same fixed-interval convention as the referral flow; no cadence was specified for this flow either">
             <scheduling-strategy>
                 <fixed-frequency frequency="300000" />
             </scheduling-strategy>
-        </scheduler>
+        </scheduler> [STUDIO] -->
 	<logger level="INFO" doc:name="START" doc:id="71829304-1526-4374-8596-071829304152" message='#["START : CIE Assessment sync to Salesforce"]'/>
 		<flow-ref doc:name="cie-assessment-salesforce-sync-main-sub-flow" doc:id="82930415-2637-4485-9607-182930415263" name="cie-assessment-salesforce-sync-main-sub-flow"/>
 		<logger level="INFO" doc:name="END" doc:id="93041526-3748-4596-a718-293041526374" message='#["END : CIE Assessment sync to Salesforce"]'/>
