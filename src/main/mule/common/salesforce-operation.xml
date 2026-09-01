@@ -11,7 +11,7 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		<salesforce:query doc:name="Query" doc:id="b0b9d28f-1206-4e3d-bd7b-5643f2ef5b9c" config-ref="Salesforce_Core_Config">
 			<salesforce:salesforce-query><![CDATA[#[vars.sfQuery]]]></salesforce:salesforce-query>
 		</salesforce:query>
-		<logger level="INFO" doc:name="After Salesforce Query Operation" doc:id="9753d2ab-3fe4-49ad-994b-8426f4377c6f" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Query Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]'/>
+		<logger level="INFO" doc:name="After Salesforce Query Operation" doc:id="9753d2ab-3fe4-49ad-994b-8426f4377c6f" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Upsert Operation",&#10;	recordCount: sizeOf(payload) default 0&#10;}]'/>
 	</sub-flow>
 	<sub-flow name="salesforce-upsert-operation-sub-flow" doc:id="d4ae3546-a27a-428c-9a11-136390a66fc4" >
 		<logger level="INFO" doc:name="Before Salesforce Upsert Operation" doc:id="edda21f2-04d4-46ea-9e41-ac3cd725ae45" message='#["Before Salesforce Upsert Operation"]' />
@@ -84,12 +84,14 @@ var failureCount = 1
 		<set-variable value="#[payload]" doc:name="Save originalPayload" doc:id="7e5f7411-12d3-49e4-b46a-df412f7fb671" variableName="originalPayload" />
 		<try doc:name="Try" doc:id="d3b55226-0254-4440-b76c-94aca5d9d80a" >
 			<salesforce:upsert objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]" doc:name="Upsert" doc:id="2de4cca7-84f6-4001-87d6-e578ca6c33b0" config-ref="Salesforce_Core_Config" />
+			
+			
 			<ee:transform doc:name="Classify Upsert Results" doc:id="ddb4cd11-1a4b-42c1-8f6f-ef561373d7b9" >
 				<ee:message >
 					<ee:set-payload ><![CDATA[%dw 2.0
 output application/json
 var upsertItems     = payload.items
-var originalRecords = (vars.originalPayload default []) as Array
+var originalRecords = ([vars.cieReferral] default []) as Array
 var zipped    = upsertItems zip originalRecords
 var successCount = sizeOf(upsertItems filter $.successful == true)
 var failureCount = sizeOf(upsertItems filter $.successful == false)
@@ -101,7 +103,7 @@ var failureCount = sizeOf(upsertItems filter $.successful == false)
     failureCount: failureCount,
     details: zipped map (pair,index) -> {
 		uniqueIdentifier: vars.externalId,
-    	uniqueIdentifierValue: vars.originalPayload[vars.externalId][index],
+    	uniqueIdentifierValue:  originalRecords[0].referral_id default null,
     	success: pair[0].successful,
         salesforceId: pair[0].id,
         created: pair[0].payload.created,
