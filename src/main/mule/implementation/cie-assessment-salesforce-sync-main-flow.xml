@@ -235,7 +235,47 @@ fun normalizeMulti(value) = if (value == null) null else
 }]]></ee:set-payload>
 						</ee:message>
 					</ee:transform>
-					<flow-ref doc:name="Upsert Assessment" doc:id="4192a3b4-c5d6-4d6f-8a97-a3b4c5d6e7f8" name="salesforce-upsert-operation-sub-flow" />
+					<!--
+						Switched from salesforce-upsert-operation-sub-flow to our
+						own assessment-salesforce-upsert-operation-sub-flow
+						(salesforce-operation.xml), added 2026-09-01. Same
+						try/classify/error-handler pattern Harshit built for
+						referrals in common-salesforce-upsert-operation-sub-flow,
+						copied rather than reused directly since his hardcodes
+						vars.cieReferral and referral_id / see the comment on
+						our copy for why. This gives us the same
+						payload.failureCount signal the referral flow checks
+						below, instead of a bare upsert with no error visibility.
+					-->
+					<flow-ref doc:name="Upsert Assessment" doc:id="4192a3b4-c5d6-4d6f-8a97-a3b4c5d6e7f8" name="assessment-salesforce-upsert-operation-sub-flow" />
+
+					<choice doc:name="Upsert Had Failures?" doc:id="d2e3f405-6172-4839-a4b5-c6d7e8f90a1b">
+						<when expression="#[payload.failureCount &gt; 0]">
+							<ee:transform doc:name="Build salesforceErrorLog" doc:id="e3f40516-7283-494a-b5c6-d7e8f90a1b2c">
+								<ee:message>
+								</ee:message>
+								<ee:variables>
+									<ee:set-variable variableName="salesforceErrorLog"><![CDATA[%dw 2.0
+output application/java
+---
+[{
+    Record_Type__c: "Assessment",
+    Entity_Type__c: "Assessment",
+	External_Unique_Identifier__c: write(payload.details map {
+    	"Identifier": $.uniqueIdentifier,
+    	"Id": $.uniqueIdentifierValue
+    	},"application/json") as String,
+    Error_Message__c: (write(payload.details.errorMessage,"application/json") as String) default error.description,
+    Flow_Name__c: flow.name,
+    Error_Timestamp__c: now(),
+    Resolution_Status__c: "Open",
+    Correlation_Id__c: correlationId
+}]]]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+							<flow-ref doc:name="log-error-in-salesforce-sub-flow" doc:id="f40617a2-8394-4a5b-c6d7-e8f90a1b2c3d" name="log-error-in-salesforce-sub-flow" />
+						</when>
+					</choice>
 
 					<logger level="INFO" doc:name="Assessment Sync Result" doc:id="52a3b4c5-d6e7-4e70-9ba8-b4c5d6e7f809"
 						message='#[output application/json&#10;---&#10;{&#10;	message: "Assessment synced",&#10;	sourceId: vars.matchRecord.sourceId,&#10;	matchedMemberId: vars.matchedMemberId default null,&#10;	matchTier: vars.matchTier default 0,&#10;	caseId: vars.associatedCaseId default null&#10;}]' />
