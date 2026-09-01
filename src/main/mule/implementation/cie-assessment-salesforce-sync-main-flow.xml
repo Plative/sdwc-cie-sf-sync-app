@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
 	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
 
 	<!--
 		Flow A: Housing Assessment ingestion. Rebuilt per the 2026-08-18
@@ -82,6 +83,35 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 	-->
 	<sub-flow name="cie-assessment-salesforce-sync-main-sub-flow" doc:id="e1f2a3b4-c5d6-4708-8192-a3b4c5d6e7f8">
 
+		<!--
+			Delta-load watermark, matching the pattern now live on
+			cie-referral-salesforce-sync-main-flow.xml (Object_store /
+			ObjectStore_Config from global-config.xml, merged in from main).
+
+			INERT BY DESIGN, re-confirmed 2026-09-01: SDWC_GetAssessmentList
+			still rejects any query string parameter at all (identical 400
+			"Invalid query string arguments" tested again today with
+			lastModifiedDate, same as 2026-08-24). So the watermark is
+			retrieved and stored here, ready to use, but deliberately NOT
+			attached to httpOperation below the way the referral flow attaches
+			its own. Wiring it in before CIE adds support would break every
+			run of this flow with a 400.
+
+			currentTimeStamp is captured at run start, not read again at the
+			end, matching the referral flow's approach, so the stored
+			watermark reflects when this run started rather than when it
+			finished.
+
+			To activate once CIE confirms support: add
+			params: { lastModifiedDate: vars.lastModifiedDate } to the
+			httpOperation object below, same shape as the referral flow's
+			httpOperation.
+		-->
+		<set-variable value="#[(now() &gt;&gt; 'UTC') as String {format: &quot;yyyy-MM-dd'T'HH:mm:ss.SSS'Z'&quot;}]" doc:name="currentTimeStamp" doc:id="a1b2c3d4-5e6f-4708-8192-a3b4c5d6e7f0" variableName="currentTimeStamp" />
+		<os:retrieve doc:id="b2c3d4e5-6f70-4819-92a3-b4c5d6e7f001" key="lastModifiedDate_assessment" objectStore="Object_store" doc:name="lastModifiedDate assessment" target="lastModifiedDate">
+			<os:default-value><![CDATA[#['1000-01-01T00:00:00.000Z' as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"}]]]></os:default-value>
+		</os:retrieve>
+
 		<ee:transform doc:name="httpOperation" doc:id="f2a3b4c5-d6e7-4819-92a3-b4c5d6e7f809">
 			<ee:message>
 			</ee:message>
@@ -94,6 +124,8 @@ output application/json
 	host: Mule::p('cie.host'),
 	port: Mule::p('cie.port'),
 	path : Mule::p('cie.assessments.path')
+	// params NOT included / see the delta-load comment above.
+	// Add: params: { lastModifiedDate: vars.lastModifiedDate } once CIE confirms support.
 }]]></ee:set-variable>
 			</ee:variables>
 		</ee:transform>
@@ -287,5 +319,20 @@ output application/java
 			</choice>
 
 		</parallel-foreach>
+
+		<!--
+			Stores the watermark unconditionally, matching the referral
+			flow's current implementation. Harmless right now since nothing
+			reads this value to filter anything yet (see the comment at the
+			top of this sub-flow) / there's no per-record failure it could
+			cause us to skip on a future run. Once real filtering is wired
+			in on either flow, this gap should be fixed in both places: a
+			per-record failure inside the loop above should hold the
+			watermark back so that record gets retried, not silently
+			skipped on the next run.
+		-->
+		<os:store doc:id="c3d4e5f6-7081-4920-a3b4-c5d6e7f00102" key="lastModifiedDate_assessment" objectStore="Object_store" doc:name="lastModifiedDate assessment">
+			<os:value><![CDATA[#[vars.currentTimeStamp]]]></os:value>
+		</os:store>
 	</sub-flow>
 </mule>
