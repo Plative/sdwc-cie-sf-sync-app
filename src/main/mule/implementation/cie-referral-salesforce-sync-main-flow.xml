@@ -61,8 +61,18 @@ var payload = vars.cieReferral
     ReferrerName: payload.agency_name,
     //ProgramId: payload.service_id,
     CIE_Referral_Method_PLI__c: payload.referral_method,
-    ClientId: payload.account_id,
-    ReferralType: "Internal",
+    // Bug fix 2026-09-23: ClientId is a reference to Account and must be the
+    // Salesforce Id the member-matching-process-sub-flow just resolved
+    // (vars.matchedMemberId), not CIE's raw payload.account_id -- that value
+    // is CIE's own internal identifier, not a Salesforce Id, and setting a
+    // reference field to it throws MALFORMED_ID. null when unmatched is
+    // correct: a referral with no member found should have a blank lookup.
+    ClientId: vars.matchedMemberId default null,
+    // Bug fix 2026-09-23: ReferralType is a restricted picklist whose only
+    // valid values are INBOUND / OUTBOUND / INTERNAL (all caps, confirmed
+    // via describe against the real org). "Internal" (title case) was
+    // rejected with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST on every upsert.
+    ReferralType: "INTERNAL",
     Source: "CIE Integration"
     //LastModifiedById: payload.referral_id
 }]]]></ee:set-payload>
