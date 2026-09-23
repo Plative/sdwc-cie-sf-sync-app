@@ -23,6 +23,16 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		record, just with the Member lookup blank / confirmed on the call
 		("you're not creating a person... keep the lookup blank").
 
+		REVISED 2026-08-19 per the CIE Referral API || SF Field call with
+		Toshiv Shrivastava: Tier 2's write-back (stamping the CIE Client ID
+		onto the matched Account so Tier 1 catches it next run) is confirmed
+		as real, intended design, not a speculative addition. It had been
+		removed after the 2026-08-18 call since that call didn't mention it;
+		Toshiv's 2026-08-19 walkthrough of the referral flow's matching logic
+		describes the exact same mechanism ("if you find it, you update that
+		client ID on the account record") as the shared basis both flows
+		matching is built on.
+
 		Caller contract:
 			vars.matchRecord = {
 				cieClientId: String | null,
@@ -34,6 +44,16 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		Sets:
 			vars.matchedMemberId   Salesforce Account Id, or null if no match
 			vars.matchTier         1, 2, or 0 for no match
+
+		Confirmed against the real sandbox via describe (2026-08-19):
+		- Account.CIE_Client_ID__c exists and is flagged as an External ID
+		  (Niranja added it after the second blocker was raised), used by
+		  Tier 1. As of this writing no Account has it populated yet, so
+		  Tier 1 will fall through to Tier 2 for all live test records.
+		- The real field for Medicaid CIN on Account is Medi_Cal_ID__pc,
+		  NOT Medi_Cal_CIN__pc as originally guessed from the data-mapping
+		  workbook. LastName and PersonBirthdate are standard fields and
+		  confirmed correct as written.
 	-->
 	<sub-flow name="member-matching-sub-flow" doc:id="7b3c4d5e-6f70-4a91-8b2c-3d4e5f607182">
 
@@ -72,6 +92,11 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		SOQL WHERE clause dynamically from only the populated fields, so a
 		record missing CIN but carrying an exact Last Name + DOB still gets
 		searched, per the call.
+
+		BUG FOUND during full-flow testing (2026-08-19): CIE's Birthdate
+		comes back as "1966-01-03Z", not a plain date. The trailing "Z"
+		broke the SOQL date literal (MALFORMED_QUERY: unexpected token 'Z').
+		Truncated to the first 10 characters (YYYY-MM-DD) before use.
 	-->
 	<sub-flow name="member-matching-tier2-sub-flow" doc:id="37586970-2b3c-4563-4748-596071829304">
 
@@ -91,9 +116,9 @@ output text/plain
 "SELECT Id FROM Account WHERE " ++
 (
 	[
-		if (vars.matchRecord.medicaidCin != null) "Medi_Cal_CIN__pc = '" ++ vars.matchRecord.medicaidCin ++ "'" else null,
+		if (vars.matchRecord.medicaidCin != null) "Medi_Cal_ID__pc = '" ++ vars.matchRecord.medicaidCin ++ "'" else null,
 		if (vars.matchRecord.lastName != null) "LastName = '" ++ vars.matchRecord.lastName ++ "'" else null,
-		if (vars.matchRecord.dob != null) "PersonBirthdate = " ++ vars.matchRecord.dob else null
+		if (vars.matchRecord.dob != null) "PersonBirthdate = " ++ (vars.matchRecord.dob)[0 to 9] else null
 	] filter ($ != null)
 ) joinBy " AND "]]></ee:set-variable>
 					</ee:variables>
@@ -105,6 +130,32 @@ output text/plain
 						<set-variable variableName="matchedMemberId" doc:name="Set Matched Member (Tier 2)" doc:id="8c031425-7081-4ab8-c92c-041526374859"
 							value="#[(payload default [])[0].Id]" />
 						<set-variable variableName="matchTier" doc:name="Set Match Tier" doc:id="9d142536-8192-4bc9-da3d-152637485960" value="2" />
+
+						<!--
+							Write-back, confirmed real on the 2026-08-19 call with
+							Toshiv Shrivastava (see file header). Only fires when
+							CIE actually sent a client id to write / current live
+							test data has SDWC_Client_Id as null on every record,
+							so this branch is coded but not yet exercised against
+							a real value.
+						-->
+						<choice doc:name="Has CIE Client ID to Write Back?" doc:id="a1b2c3d4-e5f6-4708-8192-a3b4c5d6e7f8">
+							<when expression="#[vars.matchRecord.cieClientId != null]">
+								<set-variable variableName="sfObject" doc:name="Set sfObject for Write-Back" doc:id="b2c3d4e5-f607-4819-92a3-b4c5d6e7f809" value="Account" />
+								<ee:transform doc:name="Write-Back Payload" doc:id="c3d4e5f6-0718-4a2b-a3b4-c5d6e7f8091a">
+									<ee:message>
+										<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+	Id: vars.matchedMemberId,
+	CIE_Client_ID__c: vars.matchRecord.cieClientId
+}]]></ee:set-payload>
+									</ee:message>
+								</ee:transform>
+								<flow-ref doc:name="Write Back CIE Client ID" doc:id="d4e5f607-1829-4b3c-b4c5-d6e7f8091a2b" name="salesforce-update-operation-sub-flow" />
+							</when>
+						</choice>
 					</when>
 					<otherwise>
 						<set-variable variableName="matchedMemberId" doc:name="No Match at Tier 2" doc:id="e209132b-6687-4917-c98c-607182930415" value="#[null]" />

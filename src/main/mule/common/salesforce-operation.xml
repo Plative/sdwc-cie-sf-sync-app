@@ -18,6 +18,53 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		<salesforce:upsert doc:name="Upsert" doc:id="a2c81c93-fa4d-443a-ab9d-75b114fef119" config-ref="Salesforce_Core_Config" objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]"/>
 		<logger level="INFO" doc:name="After Salesforce Upsert Operation" doc:id="3e1adfb9-0de5-49bd-92c5-e1208b09a4b0" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Upsert Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]' />
 	</sub-flow>
+	<!--
+		Used by member-matching's Tier 2 write-back: once a member is
+		matched on CIN/Last Name/DOB, the CIE Client ID gets written onto
+		that Account so Tier 1 resolves it directly next run. Confirmed as
+		real (not speculative) on the 2026-08-19 CIE Referral API || SF
+		Field call with Toshiv Shrivastava: "the first match that you're
+		doing is just based on first name, last name and date of birth or
+		medical ID. If you find it, you update that client ID on the
+		account record."
+
+		Deliberately an update-by-Id, not an upsert-by-external-id: upserting
+		on CIE_Client_ID__c before that field has ever been set on this
+		Account would risk Salesforce creating a NEW Account instead of
+		updating the one Tier 2 just matched, since there'd be no existing
+		record with that external id value yet.
+
+		NOTE: this element/attribute shape was hand-authored to match the
+		style of salesforce:query and salesforce:upsert above, on the
+		mule-salesforce-connector version pinned in pom.xml. It has not been
+		confirmed against Studio's generated XML the way the query/upsert
+		operations were. Drag a Salesforce "Update" operation onto the
+		canvas in Studio and diff it against this before relying on it.
+	-->
+	<sub-flow name="salesforce-update-operation-sub-flow" doc:id="f1a92c7b-3e4d-4a8b-9c2e-6d5b8a1f7e30">
+		<logger level="INFO" doc:name="Before Salesforce Update Operation" doc:id="a3c8e2d1-9f4b-4e6a-8d7c-1b2e3f4a5c60" message='#["Before Salesforce Update Operation"]' />
+		<salesforce:update doc:name="Update" doc:id="b4d9f3e2-0a5c-4f7b-9e8d-2c3f4a5b6d71" config-ref="Salesforce_Core_Config" objectType="#[vars.sfObject]"/>
+		<logger level="INFO" doc:name="After Salesforce Update Operation" doc:id="c5e0a4f3-1b6d-408c-af9e-3d4a5b6c7e82" message='#[output application/json&#10;---&#10;{ 	message: "After Salesforce Update Operation",&#10;	object: vars.sfObject,&#10;	recordCount: sizeOf(payload) default 0&#10;}]' />
+	</sub-flow>
+
+	<!--
+		Merged in from main (Harshit, error-handling/delta-load commit,
+		2026-08-24). log-error-in-salesforce-sub-flow itself is generic /
+		it just inserts whatever vars.salesforceErrorLog holds into
+		Integration_Log__c, so it's reusable as-is by the assessment flow.
+
+		common-salesforce-upsert-operation-sub-flow below it is NOT generic:
+		it hardcodes vars.cieReferral and originalRecords[0].referral_id,
+		both referral-specific (confirmed still true as of Harshit's
+		2026-09-01 "updated common sf upsert flow" commit, which changed the
+		error-handler fallback FROM the generic vars.originalPayload TO the
+		referral-specific vars.cieReferral / more hardcoded, not less).
+		Rather than keep hand-editing his copy every time he iterates on it,
+		the assessment flow has its own copy further down this file,
+		assessment-salesforce-upsert-operation-sub-flow, with vars.cieReferral
+		swapped for vars.matchRecord and referral_id swapped for sourceId.
+		Do not point the assessment flow at this sub-flow directly.
+	-->
 	<sub-flow name="log-error-in-salesforce-sub-flow" doc:id="8d0c1efc-0606-4681-8735-ab4fd1f1aedc" >
 		<try doc:name="Try" doc:id="9742abd5-2fbb-46af-b3e4-f77fa6e9db65" >
 			<salesforce:create type="Integration_Log__c" doc:name="create integration_error__c" doc:id="cb65bd5a-722f-4426-8c5a-3398665adae0" config-ref="Salesforce_Core_Config" >
@@ -147,5 +194,90 @@ var failureCount = sizeOf(originalRecords)
 			</error-handler>
 		</try>
 		<logger level="INFO" doc:name="Log Upsert Success Summary" doc:id="b794910c-ef17-4515-bf93-7d7f7651b2d6" message='#[%dw 2.0&#10;output application/json&#10;---&#10;{&#10;    message: "Salesforce Upsert Batch Complete",&#10;    payload: payload&#10;}]' />
+	</sub-flow>
+
+	<!--
+		Assessment's own copy of common-salesforce-upsert-operation-sub-flow
+		above, added 2026-09-01 rather than editing Harshit's directly / his
+		sub-flow hardcodes vars.cieReferral and originalRecords[0].referral_id,
+		which don't exist in the assessment flow's context, and editing his
+		copy in place has already caused two merge conflicts as he continues
+		iterating on it independently. This copy swaps in the two things that
+		actually differ:
+			vars.cieReferral        -> vars.matchRecord   (set once per record
+			                           in cie-assessment-salesforce-sync-main-flow.xml,
+			                           same role: "the current CIE record")
+			originalRecords[0].referral_id -> originalRecords[0].sourceId
+			                           (our field holding the CIE Assessment_Id)
+		Everything else / the try/classify/error-handler structure, and
+		log-error-in-salesforce-sub-flow itself / is unchanged and shared.
+	-->
+	<sub-flow name="assessment-salesforce-upsert-operation-sub-flow" doc:id="49c5e6f7-8091-4a2b-9c4d-5e6f708192a3" >
+		<logger level="INFO" doc:name="Before Salesforce Upsert Operation" doc:id="5a6f7081-92a3-4b3c-8d4e-6f708192a3b4" message='#["Before Salesforce Upsert Operation"]' />
+		<set-variable value="#[payload]" doc:name="Save originalPayload" doc:id="6b708192-a3b4-4c4d-9e5f-708192a3b4c5" variableName="originalPayload" />
+		<try doc:name="Try" doc:id="7c8192a3-b4c5-4d5e-af60-8192a3b4c5d6" >
+			<salesforce:upsert objectType="#[vars.sfObject]" externalIdFieldName="#[vars.externalId]" doc:name="Upsert" doc:id="8d9203b4-c5d6-4e5f-b071-9203b4c5d6e7" config-ref="Salesforce_Core_Config" />
+
+			<ee:transform doc:name="Classify Upsert Results" doc:id="9ea314c5-d6e7-4f60-c182-a314c5d6e7f8" >
+				<ee:message >
+					<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+var upsertItems     = payload.items
+var originalRecords = ([vars.matchRecord] default []) as Array
+var zipped    = upsertItems zip originalRecords
+var successCount = sizeOf(upsertItems filter $.successful == true)
+var failureCount = sizeOf(upsertItems filter $.successful == false)
+---
+{
+    object: vars.sfObject,
+    totalRecords: sizeOf(upsertItems),
+    successCount: successCount,
+    failureCount: failureCount,
+    details: zipped map (pair,index) -> {
+		uniqueIdentifier: vars.externalId,
+    	uniqueIdentifierValue:  originalRecords[0].sourceId default null,
+    	success: pair[0].successful,
+        salesforceId: pair[0].id,
+        created: pair[0].payload.created,
+        errorStatus: pair[0].statusCode,
+        errorMessage: pair[0].message
+    }
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<error-handler >
+				<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="af405b6c-e7f8-4071-d293-b405c6d7e8f9" >
+					<ee:transform doc:name="payload" doc:id="b0516c7d-f809-4182-e3a4-c516d7e8f900" >
+						<ee:message >
+							<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+var originalRecords = ([vars.matchRecord] default []) as Array
+var successCount = 0
+var failureCount = sizeOf(originalRecords)
+---
+{
+    object: vars.sfObject,
+    totalRecords: failureCount,
+    successCount: successCount,
+    failureCount: failureCount,
+    details: originalRecords map (pair,index) -> {
+		uniqueIdentifier: vars.externalId,
+    	uniqueIdentifierValue: pair.sourceId default null,
+    	success: false,
+        salesforceId: null,
+        created: null,
+        errorStatus: error.errorType.namespace ++ ":" ++ error.errorType.identifier,
+        errorMessage: error.description
+    }
+}]]></ee:set-payload>
+						</ee:message>
+						<ee:variables >
+							<ee:set-variable variableName="successCount" ><![CDATA[0]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				</on-error-continue>
+			</error-handler>
+		</try>
+		<logger level="INFO" doc:name="Log Upsert Success Summary" doc:id="c1627d8e-f910-4293-f4b5-d627e8f90112" message='#[%dw 2.0&#10;output application/json&#10;---&#10;{&#10;    message: "Salesforce Upsert Batch Complete",&#10;    payload: payload&#10;}]' />
 	</sub-flow>
 </mule>

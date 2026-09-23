@@ -1,44 +1,141 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
 	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
-	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
 	<!--
-		Case association for housing assessments, per the 2026-08-18 SDWC/Plative
-		sync (Jacob Belizario, Niranja Nair). Only called after
-		member-matching-sub-flow resolves a Member / referrals never call this.
+		Case association for housing assessments. Only called after
+		member-matching-sub-flow resolves a Member / referrals never call this
+		(confirmed on the 2026-08-19 CIE Referral API || SF Field call with
+		Toshiv Shrivastava: "not at this stage" for referrals, "yes" for
+		assessments).
 
-		Confirmed on the call: query the member's active Housing Deposit
-		enrollment, find its associated Case, and link the assessment to it.
-		If there's no enrollment or no case, do NOT create one / just leave
-		the Case lookup blank on the assessment ("you don't have to create a
-		case... you just create the assessment with blank case lookup").
+		REVISED 2026-08-19 (second pass) per Niranja's Custom Metadata Type
+		setup. The 2026-08-19 call established that there are three housing
+		programs with a fixed priority order, which the first revision of
+		this file hardcoded directly as literal Program.Name strings and a
+		DataWeave priority map. Niranja has since created
+		CIE_Assessment_Program__mdt to hold that same list as real,
+		queryable configuration:
+
+			DeveloperName                                Program_Id__c         Priority__c
+			CS_Housing_Transition_Navigation_Service      11Wdo000001CKX3EAO    1
+			Housing_Tenancy_Sustaining_Services_C         11Wdo000001CRIPEA4    2
+			Housing_Deposits_CS_HD                        11Wdo000001CKVREA4    3
+
+		This confirms the priority order from the call was right (Navigation
+		beats Tenancy beats Deposit) but means the flow should read that
+		order from the metadata type instead of hardcoding it, so adding or
+		reprioritizing a program is a config change, not a redeploy.
+
+		"Open" means the CASE is not closed, not the enrollment. Confirmed via
+		describe: ProgramEnrollment.Status has no "Active" value at all (its
+		real values are New / In Progress / Enrolled / Discharged) / the
+		original build's "Status = 'Active'" filter was silently wrong and
+		would have returned zero rows every time. Case.IsClosed is the
+		correct, standard boolean to filter on instead.
 
 		Caller contract: vars.matchedMemberId set to a non-null Account Id.
 
 		Sets:
-			vars.associatedCaseId   Case Id, or null if no open enrollment/case found
+			vars.associatedCaseId   Case Id, or null if no open case found
+			                        across any configured housing program
+
+		Confirmed against the real sandbox via describe + query (2026-08-19):
+		- ProgramEnrollment.AccountId is the Member lookup; ProgramId links
+		  to Program; Case_PLI__c is the Case lookup. All confirmed in the
+		  2026-08-19 sandbox test pass.
+		- Case_PLI__r is assumed as the relationship name for the
+		  Case_PLI__c lookup, used here to reach Case.IsClosed in one query.
+		  Not yet round-tripped against a real enrollment with a real
+		  linked case / there simply isn't one in the sandbox yet to test
+		  against. If this relationship name is wrong, the query will error
+		  on the Case_PLI__r.IsClosed reference and need correcting then.
 	-->
 	<sub-flow name="case-association-sub-flow" doc:id="1a2b3c4d-5e6f-4708-8192-a3b4c5d6e7f8">
 
 		<logger level="INFO" doc:name="Before Case Association" doc:id="2b3c4d5e-6f70-4819-92a3-b4c5d6e7f809"
 			message='#["Before Case Association. member=" ++ (vars.matchedMemberId default "null")]' />
 
-		<set-variable variableName="sfQuery" doc:name="Active Housing Deposit Enrollment Query" doc:id="3c4d5e6f-7081-4a2b-a3b4-c5d6e7f80910"
-			value="#[&quot;SELECT Id, Case__c FROM Program_Enrollment__c WHERE Member__c = '&quot; ++ vars.matchedMemberId ++ &quot;' AND Status__c = 'Active' AND Program__r.Name = 'Housing Deposit'&quot;]" />
-		<flow-ref doc:name="Query Active Enrollment" doc:id="4d5e6f70-8192-4b3c-b4c5-d6e7f8091a2b" name="salesforce-query-operation-sub-flow" />
+		<!--
+			Load the configured program priority list. This is metadata, not
+			org data, so it changes rarely; a future pass could cache this
+			per-run the same way the technical design's bulk-lookup pattern
+			does elsewhere, rather than querying it on every single record.
+			Left as a per-record query for now to match this codebase's
+			existing per-record style (see member-matching-operation.xml).
+		-->
+		<set-variable variableName="sfQuery" doc:name="Load Configured Program Priority" doc:id="e5f60718-2930-4415-a637-48596071829a"
+			value="SELECT Program_Id__c, Priority__c FROM CIE_Assessment_Program__mdt ORDER BY Priority__c ASC" />
+		<flow-ref doc:name="Query CIE_Assessment_Program__mdt" doc:id="f607182a-3041-4526-b748-596071829a3b" name="salesforce-query-operation-sub-flow" />
+		<set-variable variableName="programPriorityConfig" doc:name="Capture Priority Config" doc:id="0718293b-4152-4637-c859-6071829a3b4c" value="#[payload default []]" />
 
-		<choice doc:name="Enrollment and Case Found?" doc:id="5e6f7081-92a3-4c4d-c5d6-e7f8091a2b3c">
-			<when expression="#[sizeOf(payload default []) == 1 and (payload default [])[0].Case__c != null]">
-				<set-variable variableName="associatedCaseId" doc:name="Set Associated Case" doc:id="6f708192-a3b4-4d5e-d6e7-f8091a2b3c4d"
-					value="#[(payload default [])[0].Case__c]" />
+		<ee:transform doc:name="Build Program Id IN-clause" doc:id="18293c4d-5263-4748-d96a-71829a3b4c5d">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="configuredProgramIds"><![CDATA[%dw 2.0
+output application/java
+---
+vars.programPriorityConfig map $.Program_Id__c]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<choice doc:name="Any Programs Configured?" doc:id="293c4d5e-6374-4859-ea7b-829a3b4c5d6e">
+			<when expression="#[!isEmpty(vars.configuredProgramIds)]">
+
+				<ee:transform doc:name="Build Enrollment Query">
+					<ee:message>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="sfQuery"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id, Case_PLI__c, ProgramId FROM ProgramEnrollment WHERE AccountId = '" ++ vars.matchedMemberId ++
+"' AND ProgramId IN ('" ++ (vars.configuredProgramIds joinBy "','") ++
+"') AND Case_PLI__c != null AND Case_PLI__r.IsClosed = false"]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref doc:name="Query Open Enrollments Across Configured Programs" doc:id="3c4d5e6f-7485-49ea-fb8c-9a3b4c5d6e7f" name="salesforce-query-operation-sub-flow" />
+
+				<!--
+					Multiple open cases across different programs resolve by
+					the configured priority, not by picking the first result
+					arbitrarily / a member could have both an open Navigation
+					case and an open Deposit case at once, and Navigation has
+					to win.
+				-->
+				<ee:transform doc:name="Pick Highest-Priority Open Case" doc:id="4d5e6f70-8596-4afb-0c9d-3b4c5d6e7f80">
+					<ee:message>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="associatedCaseId"><![CDATA[%dw 2.0
+output application/java
+var priorityByProgramId = vars.programPriorityConfig
+	reduce ((cfg, acc = {}) -> acc ++ { (cfg.Program_Id__c): cfg.Priority__c })
+---
+(payload default [])
+	map ($ ++ { priority: priorityByProgramId[$.ProgramId] default 999 })
+	orderBy $.priority
+	then (sorted) -> if (isEmpty(sorted)) null else sorted[0].Case_PLI__c]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+
 			</when>
 			<otherwise>
-				<set-variable variableName="associatedCaseId" doc:name="No Case Found" doc:id="92a3b4c5-d6e7-4081-0910-2b3c4d5e6f70" value="#[null]" />
-				<logger level="INFO" doc:name="No Case Found Logged" doc:id="c5d6e7f8-091a-43b4-3243-5e6f708192a3"
-					message='#["No active Housing Deposit enrollment/case found for member " ++ vars.matchedMemberId ++ ". Assessment will be created with a blank Case lookup."]' />
+				<set-variable variableName="associatedCaseId" doc:name="No Programs Configured" doc:id="5e6f7081-96a7-4b0c-1d0e-4c5d6e7f8091" value="#[null]" />
+				<logger level="WARN" doc:name="No Program Priority Configured" doc:id="6f708192-a7b8-4c1d-2e1f-5d6e7f809102"
+					message='#["CIE_Assessment_Program__mdt has no records configured. Case association skipped for member " ++ vars.matchedMemberId ++ "."]' />
 			</otherwise>
+		</choice>
+
+		<choice doc:name="Case Found?" doc:id="6f708192-a3b4-4d5e-d6e7-f8091a2b3c4d">
+			<when expression="#[vars.associatedCaseId == null]">
+				<logger level="INFO" doc:name="No Case Found Logged" doc:id="c5d6e7f8-091a-43b4-3243-5e6f708192a3"
+					message='#["No open case found across the configured housing programs for member " ++ vars.matchedMemberId ++ ". Assessment will be created with a blank Case lookup."]' />
+			</when>
 		</choice>
 
 		<logger level="INFO" doc:name="After Case Association" doc:id="d6e7f809-1a2b-44c5-4354-6f708192a3b4"
